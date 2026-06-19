@@ -6,9 +6,12 @@ from pathlib import Path
 from typing import Optional
 from pydantic import BaseModel
 
+import json
+
 import yaml
 from fastapi import FastAPI, HTTPException
 from vllm import LLM, SamplingParams
+from vllm.sampling_params import StructuredOutputsParams
 from transformers import AutoTokenizer
 
 # ============================================================
@@ -28,6 +31,7 @@ MODEL_TRUST_REMOTE: bool = _cfg["model"]["trust_remote_code"]
 
 DEFAULT_MAX_TOKENS: int = _cfg["inference"]["default_max_tokens"]
 DEFAULT_TEMPERATURE: float = _cfg["inference"]["default_temperature"]
+SEED: int = _cfg["inference"]["seed"]
 
 # ============================================================
 # Global state
@@ -63,37 +67,54 @@ app = FastAPI(
 # Request models
 # ============================================================
 class GenerateRequest(BaseModel):
-    messages: list[dict[str, str]]
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
+    message: str
 
 
 class GenerateBatchRequest(BaseModel):
-    prompts: list[list[dict[str, str]]]
-    max_tokens: Optional[int] = None
-    temperature: Optional[float] = None
+    prompts: list[str]
+
+
+class GenerateStructuredRequest(BaseModel):
+    message: str
+    json_schema: dict
+
+
+class GenerateBatchStructuredRequest(BaseModel):
+    prompts: list[str]
+    json_schema: dict
 
 
 # ============================================================
 # Endpoints
 # ============================================================
 @app.post("/generate", summary="Generate text from a single chat prompt")
-async def generate(req: GenerateRequest):
+async def generate(
+    req: GenerateRequest,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
     tokenizer = MODEL_STATE["tokenizer"]
-    prompt = tokenizer.apply_chat_template(req.messages, tokenize=False, add_generation_prompt=True)
+    prompt = tokenizer.apply_chat_template(
+        [{"role": "user", "content": req.message}], tokenize=False, add_generation_prompt=True
+    )
     params = SamplingParams(
-        temperature=req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE,
-        max_tokens=req.max_tokens if req.max_tokens is not None else DEFAULT_MAX_TOKENS,
+        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
+        seed = SEED
     )
     outputs = MODEL_STATE["llm"].generate([prompt], params)
     return {"text": outputs[0].outputs[0].text.strip()}
 
 
 @app.post("/generate_batch", summary="Generate text from multiple chat prompts in a single batch")
-async def generate_batch(req: GenerateBatchRequest):
+async def generate_batch(
+    req: GenerateBatchRequest,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
@@ -102,15 +123,81 @@ async def generate_batch(req: GenerateBatchRequest):
 
     tokenizer = MODEL_STATE["tokenizer"]
     prompts = [
-        tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        for messages in req.prompts
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": msg}], tokenize=False, add_generation_prompt=True
+        )
+        for msg in req.prompts
     ]
     params = SamplingParams(
-        temperature=req.temperature if req.temperature is not None else DEFAULT_TEMPERATURE,
-        max_tokens=req.max_tokens if req.max_tokens is not None else DEFAULT_MAX_TOKENS,
+        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
+        seed = SEED
     )
     outputs = MODEL_STATE["llm"].generate(prompts, params)
     return {"texts": [o.outputs[0].text.strip() for o in outputs]}
+
+
+@app.post("/generate_structured", summary="Generate structured JSON output from a single prompt")
+async def generate_structured(
+    req: GenerateStructuredRequest,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    tokenizer = MODEL_STATE["tokenizer"]
+    prompt = tokenizer.apply_chat_template(
+        [{"role": "user", "content": req.message}], tokenize=False, add_generation_prompt=True
+    )
+    params = SamplingParams(
+        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
+        structured_outputs=StructuredOutputsParams(json=req.json_schema),
+        seed = SEED
+    )
+    outputs = MODEL_STATE["llm"].generate([prompt], params)
+    raw = outputs[0].outputs[0].text.strip()
+    try:
+        return {"result": json.loads(raw)}
+    except json.JSONDecodeError:
+        return {"result": raw}
+
+
+@app.post("/generate_batch_structured", summary="Generate structured JSON output from multiple prompts")
+async def generate_batch_structured(
+    req: GenerateBatchStructuredRequest,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    if not req.prompts:
+        raise HTTPException(status_code=422, detail="prompts must not be empty")
+
+    tokenizer = MODEL_STATE["tokenizer"]
+    prompts = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": msg}], tokenize=False, add_generation_prompt=True
+        )
+        for msg in req.prompts
+    ]
+    params = SamplingParams(
+        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
+        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
+        structured_outputs=StructuredOutputsParams(json=req.json_schema),
+        seed = SEED
+    )
+    outputs = MODEL_STATE["llm"].generate(prompts, params)
+    results = []
+    for o in outputs:
+        raw = o.outputs[0].text.strip()
+        try:
+            results.append(json.loads(raw))
+        except json.JSONDecodeError:
+            results.append(raw)
+    return {"results": results}
 
 
 @app.get("/health", summary="ตรวจสอบสถานะ API")
@@ -120,4 +207,4 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host=SERVER_HOST, port=SERVER_PORT, reload=False)
+    uvicorn.run("VLLM_API:app", host=SERVER_HOST, port=SERVER_PORT, reload=False)
