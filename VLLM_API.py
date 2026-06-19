@@ -67,20 +67,20 @@ app = FastAPI(
 # Request models
 # ============================================================
 class GenerateRequest(BaseModel):
-    message: str
+    prompt: str
 
 
 class GenerateBatchRequest(BaseModel):
-    prompts: list[str]
+    prompt: list[str]
 
 
 class GenerateStructuredRequest(BaseModel):
-    message: str
+    prompt: str
     json_schema: dict
 
 
 class GenerateBatchStructuredRequest(BaseModel):
-    prompts: list[str]
+    prompt: list[str]
     json_schema: dict
 
 
