@@ -71,7 +71,7 @@ class GenerateRequest(BaseModel):
 
 
 class GenerateBatchRequest(BaseModel):
-    prompt: list[str]
+    prompts: list[str]
 
 
 class GenerateStructuredRequest(BaseModel):
@@ -80,7 +80,7 @@ class GenerateStructuredRequest(BaseModel):
 
 
 class GenerateBatchStructuredRequest(BaseModel):
-    prompt: list[str]
+    prompts: list[str]
     json_schema: dict
 
 
