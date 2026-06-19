@@ -98,7 +98,7 @@ async def generate(
 
     tokenizer = MODEL_STATE["tokenizer"]
     prompt = tokenizer.apply_chat_template(
-        [{"role": "user", "content": req.message}], tokenize=False, add_generation_prompt=True
+        [{"role": "user", "content": req.prompt}], tokenize=False, add_generation_prompt=True
     )
     params = SamplingParams(
         temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
@@ -148,7 +148,7 @@ async def generate_structured(
 
     tokenizer = MODEL_STATE["tokenizer"]
     prompt = tokenizer.apply_chat_template(
-        [{"role": "user", "content": req.message}], tokenize=False, add_generation_prompt=True
+        [{"role": "user", "content": req.prompt}], tokenize=False, add_generation_prompt=True
     )
     params = SamplingParams(
         temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
