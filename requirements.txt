@@ -3,3 +3,4 @@ fastapi
 pydantic
 transformers
 PyYAML
+huggingface_hub
