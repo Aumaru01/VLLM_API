@@ -5,8 +5,9 @@ from huggingface_hub import snapshot_download
 from pathlib import Path
 import re
 
-model_repo = "google/gemma-4-12B"
+model_repo = "google/gemma-4-12B-it"
 save_dir = "/home/ai-model/LLM/model"
+hf_token = ""
 
 ################################################################################################################
 ################################################################################################################
@@ -20,6 +21,7 @@ os.makedirs(save_dir, exist_ok=True)
 local_path = snapshot_download(
     repo_id=model_repo,
     local_dir=save_dir,
+    token=hf_token,
     ignore_patterns=["*.msgpack", "*.h5", "flax_model*", "tf_model*"],
 )
 
