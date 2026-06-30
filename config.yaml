@@ -1,10 +1,14 @@
 server:
   host: "0.0.0.0"
-  port: 5555
+  port: 5556
 
 model:
-  path: "Qwen/Qwen2.5-7B-Instruct"  # Hugging Face Hub path example (uncomment if using Hugging Face Hub)
-  # path: "/home/ai-model/LLM/model/QwenQwen2-5-7B-Instruct" # Local path to the model example (uncomment if using local path)
+  ## Defult
+  # path: "Qwen/Qwen2.5-7B-Instruct"  # Hugging Face Hub path example (uncomment if using Hugging Face Hub)
+  path: "/home/ai-model/LLM/model/Qwen2-5-7B-Instruct" # Local path to the model example (uncomment if using local path)
+  
+  ## in testing
+  # path: "google/gemma-4-12B"
   dtype: "bfloat16"
   gpu_memory_utilization: 0.95
   trust_remote_code: true

@@ -7,6 +7,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 import json
+import time
 
 import yaml
 from fastapi import FastAPI, HTTPException
@@ -105,8 +106,21 @@ async def generate(
         max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
         seed = SEED
     )
+    start = time.time()
     outputs = MODEL_STATE["llm"].generate([prompt], params)
-    return {"text": outputs[0].outputs[0].text.strip()}
+    stop = time.time()
+    prompt_tokens = len(outputs[0].prompt_token_ids)
+    completion_tokens = len(outputs[0].outputs[0].token_ids)
+    return {
+            "text": outputs[0].outputs[0].text.strip(),
+            "time_usage_ms": (stop-start) * 1000,
+            "token_usage": {
+                "prompt_bytes": len(req.prompt.encode()),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            }
 
 
 @app.post("/generate_batch", summary="Generate text from multiple chat prompts in a single batch")
@@ -133,8 +147,21 @@ async def generate_batch(
         max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
         seed = SEED
     )
+    start = time.time()
     outputs = MODEL_STATE["llm"].generate(prompts, params)
-    return {"texts": [o.outputs[0].text.strip() for o in outputs]}
+    stop = time.time()
+    prompt_tokens = sum(len(o.prompt_token_ids) for o in outputs)
+    completion_tokens = sum(len(o.outputs[0].token_ids) for o in outputs)
+    return {
+            "texts": [o.outputs[0].text.strip() for o in outputs],
+            "time_usage_ms": (stop-start) * 1000,
+            "token_usage": {
+                "prompt_bytes": sum(len(p.encode()) for p in req.prompts),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            }
 
 
 @app.post("/generate_structured", summary="Generate structured JSON output from a single prompt")
@@ -156,12 +183,30 @@ async def generate_structured(
         structured_outputs=StructuredOutputsParams(json=req.json_schema),
         seed = SEED
     )
+    start = time.time()
     outputs = MODEL_STATE["llm"].generate([prompt], params)
+    stop = time.time()
     raw = outputs[0].outputs[0].text.strip()
+    prompt_tokens = len(outputs[0].prompt_token_ids)
+    completion_tokens = len(outputs[0].outputs[0].token_ids)
+    token_usage = {
+        "prompt_bytes": len(req.prompt.encode()),
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
     try:
-        return {"result": json.loads(raw)}
+        return {
+                "result": json.loads(raw),
+                "time_usage_ms": (stop-start) * 1000,
+                "token_usage": token_usage,
+                }
     except json.JSONDecodeError:
-        return {"result": raw}
+        return {
+                "result": raw,
+                "time_usage_ms": (stop-start) * 1000,
+                "token_usage": token_usage,
+                }
 
 
 @app.post("/generate_batch_structured", summary="Generate structured JSON output from multiple prompts")
@@ -189,7 +234,9 @@ async def generate_batch_structured(
         structured_outputs=StructuredOutputsParams(json=req.json_schema),
         seed = SEED
     )
+    start = time.time()
     outputs = MODEL_STATE["llm"].generate(prompts, params)
+    stop = time.time()
     results = []
     for o in outputs:
         raw = o.outputs[0].text.strip()
@@ -197,7 +244,18 @@ async def generate_batch_structured(
             results.append(json.loads(raw))
         except json.JSONDecodeError:
             results.append(raw)
-    return {"results": results}
+    prompt_tokens = sum(len(o.prompt_token_ids) for o in outputs)
+    completion_tokens = sum(len(o.outputs[0].token_ids) for o in outputs)
+    return {
+            "results": results,
+            "time_usage_ms": (stop-start) * 1000,
+            "token_usage": {
+                "prompt_bytes": sum(len(p.encode()) for p in req.prompts),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            }
 
 
 @app.get("/health", summary="ตรวจสอบสถานะ API")
