@@ -1,0 +1,5 @@
+vllm
+fastapi
+pydantic
+transformers
+PyYAML
