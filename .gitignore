@@ -2,3 +2,4 @@ venv
 log.log
 __pycache__
 nohup*
+config.yaml
