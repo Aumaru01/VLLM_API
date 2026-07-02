@@ -1,19 +1,27 @@
 import os
-os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
-
-from contextlib import asynccontextmanager
-from pathlib import Path
-from typing import Optional
-from pydantic import BaseModel
-
 import json
 import time
-
 import yaml
-from fastapi import FastAPI, HTTPException
-from vllm import LLM, SamplingParams
-from vllm.sampling_params import StructuredOutputsParams
+import hashlib
+import asyncio
+import contextlib
+
+from vllm import LLM
+from pathlib import Path
+from typing import Optional
 from transformers import AutoTokenizer
+from fastapi import FastAPI, HTTPException
+from contextlib import asynccontextmanager
+
+from utils.schema import (
+    UniTextItem,
+    MultiTextItem,
+    GenerateStructuredRequest,
+    GenerateBatchStructuredRequest,
+)
+from utils.run_job import JobRunner
+
+os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 
 # ============================================================
 # Config
@@ -34,12 +42,36 @@ DEFAULT_MAX_TOKENS: int = _cfg["inference"]["default_max_tokens"]
 DEFAULT_TEMPERATURE: float = _cfg["inference"]["default_temperature"]
 SEED: int = _cfg["inference"]["seed"]
 
+RESULT_DIR = Path(_cfg["result_dir"])
+RESULT_DIR.mkdir(exist_ok=True)
+
+
+# ===========================================================
+# Load Functions
+# ============================================================
+def _save_result(task_id: str, data: dict) -> None:
+    (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
+
+def _load_result(task_id: str) -> dict | None:
+    path = RESULT_DIR / f"{task_id}.json"
+    if path.exists():
+        return json.loads(path.read_text())
+    return None
+
+def _make_id(prefix: str) -> str:
+    raw = str(time.time_ns())
+    return f"{prefix}_{hashlib.shake_128(raw.encode()).hexdigest(8)}"
+
 # ============================================================
 # Global state
 # ============================================================
 MODEL_STATE: dict = {}
+task_store: dict[str, dict] = {}
+queue: asyncio.Queue = asyncio.Queue()
 
-
+# ============================================================
+# Inference jobs (run off the event loop via asyncio.to_thread)
+# ============================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(f"[Startup] Loading vLLM model: {MODEL_PATH}")
@@ -52,9 +84,78 @@ async def lifespan(app: FastAPI):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=MODEL_TRUST_REMOTE)
     MODEL_STATE["llm"] = llm
     MODEL_STATE["tokenizer"] = tokenizer
+    JOBRUNNER = JobRunner(_cfg, MODEL_STATE)
+    MODEL_STATE["run_general_single"] = JOBRUNNER.run_general_single
+    MODEL_STATE["run_general_batch"] = JOBRUNNER.run_general_batch
+    MODEL_STATE["run_general_structured"] = JOBRUNNER.run_general_structured
+    MODEL_STATE["run_general_batch_structured"] = JOBRUNNER.run_general_batch_structured
+    MODEL_STATE["run_sentiment_single"] = JOBRUNNER.run_sentiment_single
+    MODEL_STATE["run_sentiment_batch"] = JOBRUNNER.run_sentiment_batch
+    
     print("[Startup] Model loaded successfully.")
+    worker_task = asyncio.create_task(_worker())
+    
     yield
+    worker_task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await worker_task
     MODEL_STATE.clear()
+
+
+async def _worker() -> None:
+    while True:
+        job = await queue.get()
+        task_id = job["task_id"]
+        task_store[task_id]["status"] = "running"
+        try:
+            task_type = job["task_type"]
+            if task_type == "general_single":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_general_single"], 
+                    job["text"], job["max_tokens"], job["temperature"])
+            elif task_type == "general_batch":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_general_batch"], 
+                    job["ids"], job["texts"], job["max_tokens"], job["temperature"])
+            elif task_type == "sentiment_single":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_sentiment_single"], 
+                    job["text"], job["max_tokens"], job["temperature"])
+            elif task_type == "sentiment_batch":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_sentiment_batch"], 
+                    job["ids"], job["texts"], job["max_tokens"], job["temperature"])
+            elif task_type == "general_structured":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_general_structured"], 
+                    job["text"], job["json_schema"], job["max_tokens"], job["temperature"])
+            elif task_type == "general_batch_structured":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_general_batch_structured"],
+                    job["ids"], job["texts"], job["json_schema"], job["max_tokens"], job["temperature"])
+            else:
+                raise ValueError(f"Unknown task_type: {task_type}")
+            
+            time_used_ms = handler_result.pop("time_usage_ms")
+            token_usage = handler_result.pop("token_usage")
+            result = handler_result["result"] if list(handler_result.keys()) == ["result"] else handler_result
+            task_store[task_id] = {
+                "status": "done",
+                "time_used_ms": time_used_ms,
+                "token_usage": token_usage,
+                "result": result,
+            }
+        except Exception as e:
+            task_store[task_id] = {"status": "error", "error": str(e)}
+        _save_result(task_id, task_store[task_id])
+        queue.task_done()
+
+
+def _enqueue(task_type: str, **job_fields) -> str:
+    task_id = _make_id(task_type)
+    task_store[task_id] = {"status": "queued"}
+    queue.put_nowait({"task_id": task_id, "task_type": task_type, **job_fields})
+    return task_id
 
 
 app = FastAPI(
@@ -63,109 +164,57 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
-# ============================================================
-# Request models
-# ============================================================
-class GenerateRequest(BaseModel):
-    prompt: str
-
-
-class GenerateBatchRequest(BaseModel):
-    prompts: list[str]
-
-
-class GenerateStructuredRequest(BaseModel):
-    prompt: str
-    json_schema: dict
-
-
-class GenerateBatchStructuredRequest(BaseModel):
-    prompts: list[str]
-    json_schema: dict
-
-
 # ============================================================
 # Endpoints
 # ============================================================
-@app.post("/generate", summary="Generate text from a single chat prompt")
-async def generate(
-    req: GenerateRequest,
+@app.post("/general", summary="Queue generation of general text from a single chat text", status_code=202)
+async def General(
+    req: UniTextItem,
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
-    tokenizer = MODEL_STATE["tokenizer"]
-    prompt = tokenizer.apply_chat_template(
-        [{"role": "user", "content": req.prompt}], tokenize=False, add_generation_prompt=True
+    task_id = _enqueue(
+        "general_single", 
+        text=req.text, 
+        max_tokens=max_tokens, 
+        temperature=temperature
     )
-    params = SamplingParams(
-        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
-        seed = SEED
-    )
-    start = time.time()
-    outputs = MODEL_STATE["llm"].generate([prompt], params)
-    stop = time.time()
-    prompt_tokens = len(outputs[0].prompt_token_ids)
-    completion_tokens = len(outputs[0].outputs[0].token_ids)
-    return {
-            "text": outputs[0].outputs[0].text.strip(),
-            "time_usage_ms": (stop-start) * 1000,
-            "token_usage": {
-                "prompt_bytes": len(req.prompt.encode()),
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
-            }
+    return {"task_id": task_id, "status": "queued"}
 
 
-@app.post("/generate_batch", summary="Generate text from multiple chat prompts in a single batch")
-async def generate_batch(
-    req: GenerateBatchRequest,
+@app.post("/general_batch", summary="Queue generation of general text from multiple chat texts in a single batch", status_code=202,)
+async def General_batch(
+    req: list[MultiTextItem],
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
-    if not req.prompts:
-        raise HTTPException(status_code=422, detail="prompts must not be empty")
+    ids = [item.id for item in req]
+    texts = [item.text for item in req]
+    
+    if not texts:
+        raise HTTPException(status_code=422, detail="texts must not be empty")
+    
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
 
-    tokenizer = MODEL_STATE["tokenizer"]
-    prompts = [
-        tokenizer.apply_chat_template(
-            [{"role": "user", "content": msg}], tokenize=False, add_generation_prompt=True
-        )
-        for msg in req.prompts
-    ]
-    params = SamplingParams(
-        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
-        seed = SEED
+    task_id = _enqueue(
+        "general_batch", 
+        ids=ids, 
+        texts=texts, 
+        max_tokens=max_tokens, 
+        temperature=temperature
     )
-    start = time.time()
-    outputs = MODEL_STATE["llm"].generate(prompts, params)
-    stop = time.time()
-    prompt_tokens = sum(len(o.prompt_token_ids) for o in outputs)
-    completion_tokens = sum(len(o.outputs[0].token_ids) for o in outputs)
-    return {
-            "texts": [o.outputs[0].text.strip() for o in outputs],
-            "time_usage_ms": (stop-start) * 1000,
-            "token_usage": {
-                "prompt_bytes": sum(len(p.encode()) for p in req.prompts),
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
-            }
+    return {"task_id": task_id, "status": "queued"}
 
 
-@app.post("/generate_structured", summary="Generate structured JSON output from a single prompt")
-async def generate_structured(
+@app.post("/general_structured", summary="Queue generation of general structured JSON output from a single text", status_code=202,)
+async def General_structured(
     req: GenerateStructuredRequest,
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
@@ -173,44 +222,18 @@ async def generate_structured(
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
-    tokenizer = MODEL_STATE["tokenizer"]
-    prompt = tokenizer.apply_chat_template(
-        [{"role": "user", "content": req.prompt}], tokenize=False, add_generation_prompt=True
+    task_id = _enqueue(
+        "general_structured",
+        text=req.text.text,
+        json_schema=req.json_schema,
+        max_tokens=max_tokens,
+        temperature=temperature,
     )
-    params = SamplingParams(
-        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
-        structured_outputs=StructuredOutputsParams(json=req.json_schema),
-        seed = SEED
-    )
-    start = time.time()
-    outputs = MODEL_STATE["llm"].generate([prompt], params)
-    stop = time.time()
-    raw = outputs[0].outputs[0].text.strip()
-    prompt_tokens = len(outputs[0].prompt_token_ids)
-    completion_tokens = len(outputs[0].outputs[0].token_ids)
-    token_usage = {
-        "prompt_bytes": len(req.prompt.encode()),
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-        "total_tokens": prompt_tokens + completion_tokens,
-    }
-    try:
-        return {
-                "result": json.loads(raw),
-                "time_usage_ms": (stop-start) * 1000,
-                "token_usage": token_usage,
-                }
-    except json.JSONDecodeError:
-        return {
-                "result": raw,
-                "time_usage_ms": (stop-start) * 1000,
-                "token_usage": token_usage,
-                }
+    return {"task_id": task_id, "status": "queued"}
 
 
-@app.post("/generate_batch_structured", summary="Generate structured JSON output from multiple prompts")
-async def generate_batch_structured(
+@app.post("/general_batch_structured", summary="Queue generation of general structured JSON output from multiple texts", status_code=202,)
+async def General_batch_structured(
     req: GenerateBatchStructuredRequest,
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
@@ -218,49 +241,87 @@ async def generate_batch_structured(
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
-    if not req.prompts:
-        raise HTTPException(status_code=422, detail="prompts must not be empty")
+    ids = [item.id for item in req.texts]
+    texts = [item.text for item in req.texts]
 
-    tokenizer = MODEL_STATE["tokenizer"]
-    prompts = [
-        tokenizer.apply_chat_template(
-            [{"role": "user", "content": msg}], tokenize=False, add_generation_prompt=True
-        )
-        for msg in req.prompts
-    ]
-    params = SamplingParams(
-        temperature=temperature if temperature is not None else DEFAULT_TEMPERATURE,
-        max_tokens=max_tokens if max_tokens is not None else DEFAULT_MAX_TOKENS,
-        structured_outputs=StructuredOutputsParams(json=req.json_schema),
-        seed = SEED
+    if not texts:
+        raise HTTPException(status_code=422, detail="texts must not be empty")
+
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
+
+    task_id = _enqueue(
+        "general_batch_structured",
+        ids=ids,
+        texts=texts,
+        json_schema=req.json_schema,
+        max_tokens=max_tokens,
+        temperature=temperature,
     )
-    start = time.time()
-    outputs = MODEL_STATE["llm"].generate(prompts, params)
-    stop = time.time()
-    results = []
-    for o in outputs:
-        raw = o.outputs[0].text.strip()
-        try:
-            results.append(json.loads(raw))
-        except json.JSONDecodeError:
-            results.append(raw)
-    prompt_tokens = sum(len(o.prompt_token_ids) for o in outputs)
-    completion_tokens = sum(len(o.outputs[0].token_ids) for o in outputs)
-    return {
-            "results": results,
-            "time_usage_ms": (stop-start) * 1000,
-            "token_usage": {
-                "prompt_bytes": sum(len(p.encode()) for p in req.prompts),
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
-            },
-            }
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.post("/sentiment", summary="Queue sentiment analysis of a single chat text", status_code=202)
+async def sentiment(
+    req: UniTextItem,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    task_id = _enqueue(
+        "sentiment_single", 
+        text=req.text, 
+        max_tokens=max_tokens, 
+        temperature=temperature
+    )
+    return {"task_id": task_id, "status": "queued"}
+
+@app.post("/sentiment_batch", summary="Queue sentiment analysis of multiple chat texts", status_code=202)
+async def sentiment_batch(
+    req: list[MultiTextItem],
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    ids = [item.id for item in req]
+    texts = [item.text for item in req]
+
+    if not texts:
+        raise HTTPException(status_code=422, detail="texts must not be empty")
+
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
+
+    task_id = _enqueue(
+        "sentiment_batch",
+        ids=ids,
+        texts=texts,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.get("/result/{task_id}", summary="ดึงสถานะ/ผลลัพธ์ของ task จาก task_id")
+async def get_result(task_id: str):
+    task = task_store.get(task_id)
+    if task is not None:
+        return {"task_id": task_id, **task}
+
+    saved = _load_result(task_id)
+    if saved is not None:
+        return {"task_id": task_id, **saved}
+
+    raise HTTPException(status_code=404, detail="task_id not found")
 
 
 @app.get("/health", summary="ตรวจสอบสถานะ API")
 async def health():
-    return {"status": "ok", "model_loaded": "llm" in MODEL_STATE}
+    return {"status": "ok", "model_loaded": "llm" in MODEL_STATE, "queue_size": queue.qsize()}
 
 
 if __name__ == "__main__":

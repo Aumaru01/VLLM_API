@@ -19,4 +19,9 @@ inference:
   default_temperature: 0.7
   seed : 5555
 
+sentiment:
+  max_string_length : 500
+  only_sentiment_output : true
+
+result_dir: "/home/ai-model/sentiment_by_selfhost_LLM/result"
 
