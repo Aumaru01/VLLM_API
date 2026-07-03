@@ -1,0 +1,3 @@
+model_name : google/gemma-4-12B-it
+save_dir : /home/ai-model/LLM/model
+Huggingface_token : <your hugging face token>

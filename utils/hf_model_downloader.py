@@ -5,9 +5,13 @@ from huggingface_hub import snapshot_download
 from pathlib import Path
 import re
 
-model_repo = "google/gemma-4-12B-it"
-save_dir = "/home/ai-model/LLM/model"
-hf_token = ""
+_cfg_path = Path(__file__).parent / "model_download_config.yaml"
+with open(_cfg_path) as f:
+    _cfg = yaml.safe_load(f)
+
+model_repo = _cfg["model_name"]
+save_dir = _cfg["save_dir"]
+hf_token = _cfg["Huggingface_token"]
 
 ################################################################################################################
 ################################################################################################################
