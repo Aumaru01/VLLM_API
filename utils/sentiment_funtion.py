@@ -7,12 +7,16 @@ with open("config.yaml") as f:
     _cfg = yaml.safe_load(f)
 
 _SENTIMENT_CFG = _cfg.get("sentiment", {})
+SENTENCE_LENGTH_LIMIT: bool = _SENTIMENT_CFG.get("sentence_length_limit", True)
 LENGTH_LIMIT: int = _SENTIMENT_CFG.get("max_string_length", 500)
 FILTER: bool = _SENTIMENT_CFG.get("only_sentiment_output", True)
 
 
 def generate_sentiment_prompt(text):
-    lengthed_text = text[:LENGTH_LIMIT]
+    if SENTENCE_LENGTH_LIMIT:
+        lengthed_text = text[:LENGTH_LIMIT]
+    else:
+        lengthed_text = text
     PROMPT = (
             # f"คุณเป็นผู้เชี่ยวชาญด้าน Sentiment Analysis หน้าที่ของคุณคือการประเมิน 'ความรู้สึกของผู้คอมเมนต์' เท่านั้น "
             f"คุณเป็นผู้เชี่ยวชาญด้าน Sentiment Analysis ที่มักจะมองโลกในแง่ร้าย หน้าที่ของคุณคือการประเมิน 'ความรู้สึกของผู้คอมเมนต์' เท่านั้น "

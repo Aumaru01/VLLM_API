@@ -1,16 +1,11 @@
 server:
   host: "0.0.0.0"
-  port: 5556
+  port: 55555
 
-model:
-  ## Hugging Face Hub path example (uncomment if using Hugging Face Hub) ##
-  # path: "Qwen/Qwen2.5-7B-Instruct"
-
-  ## Local path to the model example (uncomment if using local path) ##
-  path: "/home/ai-model/LLM/model/Qwen2-5-7B-Instruct" 
-
+model:  
+  path: "/home/ai-model/LLM/model/gemma-4-E4B-it-qat-mobile-ct"
   dtype: "bfloat16"
-  gpu_memory_utilization: 0.95
+  gpu_memory_utilization: 0.45
   trust_remote_code: true
 
 inference:
@@ -20,8 +15,8 @@ inference:
   seed : 5555
 
 sentiment:
+  sentence_length_limit : true
   max_string_length : 500
   only_sentiment_output : true
 
 result_dir: "/home/ai-model/sentiment_by_selfhost_LLM/result"
-
