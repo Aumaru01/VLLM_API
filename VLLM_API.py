@@ -45,15 +45,31 @@ SEED: int = _cfg["inference"]["seed"]
 RESULT_DIR = Path(_cfg["result_dir"])
 RESULT_DIR.mkdir(exist_ok=True)
 
+GENERAL_DIR = RESULT_DIR / "general"
+GENERAL_DIR.mkdir(exist_ok=True)
 
-# ===========================================================
+SENTIMENT_DIR = RESULT_DIR / "sentiment"
+SENTIMENT_DIR.mkdir(exist_ok=True)
+
+# ============================================================
 # Load Functions
 # ============================================================
 def _save_result(task_id: str, data: dict) -> None:
-    (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
+    if "general" in task_id:
+        (GENERAL_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
+    elif "sentiment" in task_id:
+        (SENTIMENT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
+    else:
+        (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
 
 def _load_result(task_id: str) -> dict | None:
-    path = RESULT_DIR / f"{task_id}.json"
+    if "general" in task_id:
+        path = GENERAL_DIR / f"{task_id}.json"
+    elif "sentiment" in task_id:
+        path = SENTIMENT_DIR / f"{task_id}.json"
+    else:
+        path = RESULT_DIR / f"{task_id}.json"
+
     if path.exists():
         return json.loads(path.read_text())
     return None
