@@ -69,9 +69,13 @@ def _load_result(task_id: str) -> dict | None:
         path = SENTIMENT_DIR / f"{task_id}.json"
     else:
         path = RESULT_DIR / f"{task_id}.json"
-
+    
     if path.exists():
         return json.loads(path.read_text())
+    else:
+        path = RESULT_DIR / f"{task_id}.json"
+        if path.exists():
+            return json.loads(path.read_text())
     return None
 
 def _make_id(prefix: str) -> str:
