@@ -8,6 +8,7 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 - Async job queue: requests return a `task_id` immediately (`202 Accepted`), results are fetched by polling
 - Batch endpoints for processing multiple texts in one vLLM call
 - Structured output generation constrained to a caller-supplied JSON schema
+- PDF upload endpoint: renders pages to images and sends them to the model as multimodal input (falls back to a "model not support upload file" note if the loaded model isn't vision-capable)
 - Built-in Thai sentiment analysis prompt (Positive / Neutral / Negative)
 - Results persisted to disk (`result_dir`) so they survive process restarts
 - Config-driven via `config.yaml` (server, model, inference defaults, sentiment settings)
@@ -17,7 +18,7 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 - Python 3.10+
 - An NVIDIA GPU supported by vLLM
 - Dependencies in `requirements.txt`:
-  - `vllm`, `fastapi`, `pydantic`, `transformers`, `PyYAML`, `huggingface_hub`
+  - `vllm`, `fastapi`, `pydantic`, `transformers`, `PyYAML`, `huggingface_hub`, `pypdfium2` (PDF page rendering)
 
 ## Setup
 
@@ -52,7 +53,7 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 | `model` | `dtype` | vLLM dtype (e.g. `bfloat16`) |
 | `model` | `gpu_memory_utilization` | Fraction of GPU memory vLLM may use |
 | `model` | `trust_remote_code` | Passed to vLLM/tokenizer for custom model code |
-| `inference` | `default_max_tokens`, `default_temperature` | Fallback sampling params when a request omits them |
+| `inference` | `default_temperature` | Fallback sampling param when a request omits it (max_tokens falls back to the model's `max_model_len`) |
 | `inference` | `seed` | Sampling seed used for all generations |
 | `sentiment` | `max_string_length` | Characters of input text used for sentiment analysis |
 | `sentiment` | `only_sentiment_output` | If true, forces output to one of Positive/Neutral/Negative |
@@ -80,7 +81,7 @@ All generation/sentiment endpoints are async: they enqueue a job and return a `t
 ### `POST /general`
 Queue single-text generation.
 - Body: `{"text": "..."}`
-- Query params: `max_tokens`, `temperature` (optional, fall back to config defaults)
+- Query params: `max_tokens` (optional, falls back to the model's `max_model_len`), `temperature` (optional, falls back to `config.yaml`'s `default_temperature`)
 
 ### `POST /general_batch`
 Queue generation for multiple texts in one batch.
@@ -93,6 +94,14 @@ Queue generation constrained to a JSON schema.
 ### `POST /general_batch_structured`
 Batch version of structured generation.
 - Body: `{"texts": [{"id": "...", "text": "..."}, ...], "json_schema": {...}}`
+
+### `POST /general_with_PDF`
+Queue generation from a chat text plus an uploaded PDF file. Multipart form (`multipart/form-data`), not JSON:
+- `file`: the PDF (required)
+- `text`: prompt text (optional form field)
+- `max_tokens`, `temperature` (optional query params)
+
+Each page of the PDF is rendered to an image (up to 8 pages) and sent to the model as multimodal input via `LLM.chat()`. If the loaded model isn't vision-capable (or the file fails to render), the result comes back with `"note": "model not support upload file"` and an `error` field instead of raising.
 
 ### `POST /sentiment`
 Queue Thai sentiment analysis for a single text.

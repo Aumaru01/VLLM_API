@@ -10,7 +10,7 @@ from vllm import LLM
 from pathlib import Path
 from typing import Optional
 from transformers import AutoTokenizer
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from contextlib import asynccontextmanager
 
 from utils.schema import (
@@ -38,7 +38,6 @@ MODEL_DTYPE: str = _cfg["model"]["dtype"]
 MODEL_GPU_UTIL: float = _cfg["model"]["gpu_memory_utilization"]
 MODEL_TRUST_REMOTE: bool = _cfg["model"]["trust_remote_code"]
 
-DEFAULT_MAX_TOKENS: int = _cfg["inference"]["default_max_tokens"]
 DEFAULT_TEMPERATURE: float = _cfg["inference"]["default_temperature"]
 SEED: int = _cfg["inference"]["seed"]
 
@@ -109,6 +108,7 @@ async def lifespan(app: FastAPI):
     MODEL_STATE["run_general_batch"] = JOBRUNNER.run_general_batch
     MODEL_STATE["run_general_structured"] = JOBRUNNER.run_general_structured
     MODEL_STATE["run_general_batch_structured"] = JOBRUNNER.run_general_batch_structured
+    MODEL_STATE["run_general_with_PDF"] = JOBRUNNER.run_general_with_PDF
     MODEL_STATE["run_sentiment_single"] = JOBRUNNER.run_sentiment_single
     MODEL_STATE["run_sentiment_batch"] = JOBRUNNER.run_sentiment_batch
     
@@ -153,6 +153,10 @@ async def _worker() -> None:
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_batch_structured"],
                     job["ids"], job["texts"], job["json_schema"], job["max_tokens"], job["temperature"])
+            elif task_type == "general_with_PDF":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_general_with_PDF"],
+                    job["text"], job["file_bytes"], job["filename"], job["max_tokens"], job["temperature"])
             else:
                 raise ValueError(f"Unknown task_type: {task_type}")
             
@@ -191,7 +195,7 @@ app = FastAPI(
 async def General(
     req: UniTextItem,
     max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -209,7 +213,7 @@ async def General(
 async def General_batch(
     req: list[MultiTextItem],
     max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -237,7 +241,7 @@ async def General_batch(
 async def General_structured(
     req: GenerateStructuredRequest,
     max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -256,7 +260,7 @@ async def General_structured(
 async def General_batch_structured(
     req: GenerateBatchStructuredRequest,
     max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -281,11 +285,39 @@ async def General_batch_structured(
     return {"task_id": task_id, "status": "queued"}
 
 
+@app.post("/general_with_PDF", summary="Queue generation of general text from a chat text with an uploaded PDF file", status_code=202)
+async def General_with_file(
+    file: UploadFile = File(...),
+    text: Optional[str] = Form(None),
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    if file.content_type != "application/pdf" and not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=422, detail="Only PDF files are supported")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    task_id = _enqueue(
+        "general_with_PDF",
+        text=text,
+        file_bytes=file_bytes,
+        filename=file.filename,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return {"task_id": task_id, "status": "queued"}
+
+
 @app.post("/sentiment", summary="Queue sentiment analysis of a single chat text", status_code=202)
 async def sentiment(
     req: UniTextItem,
     max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -302,7 +334,7 @@ async def sentiment(
 async def sentiment_batch(
     req: list[MultiTextItem],
     max_tokens: Optional[int] = None,
-    temperature: Optional[float] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
