@@ -1,18 +1,25 @@
 import os
-import json
 import time
-import yaml
-import hashlib
 import asyncio
 import contextlib
 
 from vllm import LLM
-from pathlib import Path
+from datetime import datetime
 from typing import Optional
 from transformers import AutoTokenizer
 from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from contextlib import asynccontextmanager
 
+from __init__ import (
+    CFG,
+    SERVER_HOST,
+    SERVER_PORT,
+    MODEL_PATH,
+    MODEL_DTYPE,
+    MODEL_GPU_UTIL,
+    MODEL_TRUST_REMOTE,
+    DEFAULT_TEMPERATURE,
+)
 from utils.schema import (
     UniTextItem,
     MultiTextItem,
@@ -20,66 +27,9 @@ from utils.schema import (
     GenerateBatchStructuredRequest,
 )
 from utils.run_job import JobRunner
+from utils.funtion import _save_result, _load_result, _make_id, _scan_disk_tasks
 
 os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
-
-# ============================================================
-# Config
-# ============================================================
-_cfg_path = Path(__file__).parent / "config.yaml"
-with open(_cfg_path) as f:
-    _cfg = yaml.safe_load(f)
-
-SERVER_HOST: str = _cfg["server"]["host"]
-SERVER_PORT: int = _cfg["server"]["port"]
-
-MODEL_PATH: str = _cfg["model"]["path"]
-MODEL_DTYPE: str = _cfg["model"]["dtype"]
-MODEL_GPU_UTIL: float = _cfg["model"]["gpu_memory_utilization"]
-MODEL_TRUST_REMOTE: bool = _cfg["model"]["trust_remote_code"]
-
-DEFAULT_TEMPERATURE: float = _cfg["inference"]["default_temperature"]
-SEED: int = _cfg["inference"]["seed"]
-
-RESULT_DIR = Path(_cfg["result_dir"])
-RESULT_DIR.mkdir(exist_ok=True)
-
-GENERAL_DIR = RESULT_DIR / "general"
-GENERAL_DIR.mkdir(exist_ok=True)
-
-SENTIMENT_DIR = RESULT_DIR / "sentiment"
-SENTIMENT_DIR.mkdir(exist_ok=True)
-
-# ============================================================
-# Load Functions
-# ============================================================
-def _save_result(task_id: str, data: dict) -> None:
-    if "general" in task_id:
-        (GENERAL_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
-    elif "sentiment" in task_id:
-        (SENTIMENT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
-    else:
-        (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
-
-def _load_result(task_id: str) -> dict | None:
-    if "general" in task_id:
-        path = GENERAL_DIR / f"{task_id}.json"
-    elif "sentiment" in task_id:
-        path = SENTIMENT_DIR / f"{task_id}.json"
-    else:
-        path = RESULT_DIR / f"{task_id}.json"
-    
-    if path.exists():
-        return json.loads(path.read_text())
-    else:
-        path = RESULT_DIR / f"{task_id}.json"
-        if path.exists():
-            return json.loads(path.read_text())
-    return None
-
-def _make_id(prefix: str) -> str:
-    raw = str(time.time_ns())
-    return f"{prefix}_{hashlib.shake_128(raw.encode()).hexdigest(8)}"
 
 # ============================================================
 # Global state
@@ -103,7 +53,7 @@ async def lifespan(app: FastAPI):
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=MODEL_TRUST_REMOTE)
     MODEL_STATE["llm"] = llm
     MODEL_STATE["tokenizer"] = tokenizer
-    JOBRUNNER = JobRunner(_cfg, MODEL_STATE)
+    JOBRUNNER = JobRunner(CFG, MODEL_STATE)
     MODEL_STATE["run_general_single"] = JOBRUNNER.run_general_single
     MODEL_STATE["run_general_batch"] = JOBRUNNER.run_general_batch
     MODEL_STATE["run_general_structured"] = JOBRUNNER.run_general_structured
@@ -111,6 +61,8 @@ async def lifespan(app: FastAPI):
     MODEL_STATE["run_general_with_PDF"] = JOBRUNNER.run_general_with_PDF
     MODEL_STATE["run_sentiment_single"] = JOBRUNNER.run_sentiment_single
     MODEL_STATE["run_sentiment_batch"] = JOBRUNNER.run_sentiment_batch
+    MODEL_STATE["run_ner_single"] = JOBRUNNER.run_ner_single
+    MODEL_STATE["run_ner_batch"] = JOBRUNNER.run_ner_batch
     
     print("[Startup] Model loaded successfully.")
     worker_task = asyncio.create_task(_worker())
@@ -129,34 +81,52 @@ async def _worker() -> None:
         task_store[task_id]["status"] = "running"
         try:
             task_type = job["task_type"]
+            
             if task_type == "general_single":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_single"], 
                     job["text"], job["max_tokens"], job["temperature"])
+            
             elif task_type == "general_batch":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_batch"], 
                     job["ids"], job["texts"], job["max_tokens"], job["temperature"])
-            elif task_type == "sentiment_single":
-                handler_result = await asyncio.to_thread(
-                    MODEL_STATE["run_sentiment_single"], 
-                    job["text"], job["max_tokens"], job["temperature"])
-            elif task_type == "sentiment_batch":
-                handler_result = await asyncio.to_thread(
-                    MODEL_STATE["run_sentiment_batch"], 
-                    job["ids"], job["texts"], job["max_tokens"], job["temperature"])
+            
             elif task_type == "general_structured":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_structured"], 
                     job["text"], job["json_schema"], job["max_tokens"], job["temperature"])
+            
             elif task_type == "general_batch_structured":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_batch_structured"],
                     job["ids"], job["texts"], job["json_schema"], job["max_tokens"], job["temperature"])
+
+            elif task_type == "sentiment_single":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_sentiment_single"], 
+                    job["text"], job["max_tokens"], job["temperature"])
+            
+            elif task_type == "sentiment_batch":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_sentiment_batch"], 
+                    job["ids"], job["texts"], job["max_tokens"], job["temperature"])
+                
+            elif task_type == "ner_single":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_ner_single"], 
+                    job["text"], job["max_tokens"], job["temperature"])
+            
+            elif task_type == "ner_batch":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_ner_batch"], 
+                    job["ids"], job["texts"], job["max_tokens"], job["temperature"])
+            
             elif task_type == "general_with_PDF":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_with_PDF"],
                     job["text"], job["file_bytes"], job["filename"], job["max_tokens"], job["temperature"])
+            
             else:
                 raise ValueError(f"Unknown task_type: {task_type}")
             
@@ -164,20 +134,21 @@ async def _worker() -> None:
             token_usage = handler_result.pop("token_usage")
             result = handler_result["result"] if list(handler_result.keys()) == ["result"] else handler_result
             task_store[task_id] = {
+                **task_store[task_id],
                 "status": "done",
                 "time_used_ms": time_used_ms,
                 "token_usage": token_usage,
                 "result": result,
             }
         except Exception as e:
-            task_store[task_id] = {"status": "error", "error": str(e)}
+            task_store[task_id] = {**task_store[task_id], "status": "error", "error": str(e)}
         _save_result(task_id, task_store[task_id])
         queue.task_done()
 
 
 def _enqueue(task_type: str, **job_fields) -> str:
     task_id = _make_id(task_type)
-    task_store[task_id] = {"status": "queued"}
+    task_store[task_id] = {"status": "queued", "created_at": time.time()}
     queue.put_nowait({"task_id": task_id, "task_type": task_type, **job_fields})
     return task_id
 
@@ -357,6 +328,49 @@ async def sentiment_batch(
     )
     return {"task_id": task_id, "status": "queued"}
 
+@app.post("/ner", summary="Queue text ner of a single chat text", status_code=202)
+async def ner(
+    req: UniTextItem,
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    task_id = _enqueue(
+        "ner_single", 
+        text=req.text, 
+        max_tokens=max_tokens, 
+        temperature=temperature
+    )
+    return {"task_id": task_id, "status": "queued"}
+
+@app.post("/ner_batch", summary="Queue text ner of multiple chat texts", status_code=202)
+async def ner_batch(
+    req: list[MultiTextItem],
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    ids = [item.id for item in req]
+    texts = [item.text for item in req]
+
+    if not texts:
+        raise HTTPException(status_code=422, detail="texts must not be empty")
+
+    if len(set(ids)) != len(ids):
+        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
+
+    task_id = _enqueue(
+        "ner_batch",
+        ids=ids,
+        texts=texts,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return {"task_id": task_id, "status": "queued"}
 
 @app.get("/result/{task_id}", summary="ดึงสถานะ/ผลลัพธ์ของ task จาก task_id")
 async def get_result(task_id: str):
@@ -369,6 +383,33 @@ async def get_result(task_id: str):
         return {"task_id": task_id, **saved}
 
     raise HTTPException(status_code=404, detail="task_id not found")
+
+
+@app.get("/queue", summary="List task ids and status from the current run plus disk history")
+async def list_queue(days: int = 3):
+    cutoff = time.time() - days * 86400
+    tasks = _scan_disk_tasks(cutoff)
+
+    for tid, t in task_store.items():
+        created_at = t.get("created_at", time.time())
+        if created_at >= cutoff:
+            tasks[tid] = {"status": t.get("status"), "created_at": created_at}
+        else:
+            tasks.pop(tid, None)
+
+    ordered = sorted(tasks.items(), key=lambda kv: kv[1]["created_at"], reverse=True)
+    return {
+        "queue_size": queue.qsize(),
+        "count": len(ordered),
+        "tasks": [
+            {
+                "task_id": tid,
+                "status": info["status"],
+                "created_at": datetime.fromtimestamp(info["created_at"]).strftime("%Y-%m-%d %H:%M:%S"),
+            }
+            for tid, info in ordered
+        ],
+    }
 
 
 @app.get("/health", summary="ตรวจสอบสถานะ API")

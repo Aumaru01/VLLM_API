@@ -1,15 +1,7 @@
 
 import re
 import yaml
-
-
-with open("config.yaml") as f:
-    _cfg = yaml.safe_load(f)
-
-_SENTIMENT_CFG = _cfg.get("sentiment", {})
-SENTENCE_LENGTH_LIMIT: bool = _SENTIMENT_CFG.get("sentence_length_limit", True)
-LENGTH_LIMIT: int = _SENTIMENT_CFG.get("max_string_length", 500)
-FILTER: bool = _SENTIMENT_CFG.get("only_sentiment_output", True)
+from __init__ import SENTENCE_LENGTH_LIMIT, LENGTH_LIMIT, FILTER
 
 
 def generate_sentiment_prompt(text):
