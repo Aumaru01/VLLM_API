@@ -301,6 +301,7 @@ async def sentiment(
     )
     return {"task_id": task_id, "status": "queued"}
 
+
 @app.post("/sentiment_batch", summary="Queue sentiment analysis of multiple chat texts", status_code=202)
 async def sentiment_batch(
     req: list[MultiTextItem],
@@ -328,6 +329,7 @@ async def sentiment_batch(
     )
     return {"task_id": task_id, "status": "queued"}
 
+
 @app.post("/ner", summary="Queue text ner of a single chat text", status_code=202)
 async def ner(
     req: UniTextItem,
@@ -345,32 +347,6 @@ async def ner(
     )
     return {"task_id": task_id, "status": "queued"}
 
-@app.post("/ner_batch", summary="Queue text ner of multiple chat texts", status_code=202)
-async def ner_batch(
-    req: list[MultiTextItem],
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    ids = [item.id for item in req]
-    texts = [item.text for item in req]
-
-    if not texts:
-        raise HTTPException(status_code=422, detail="texts must not be empty")
-
-    if len(set(ids)) != len(ids):
-        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
-
-    task_id = _enqueue(
-        "ner_batch",
-        ids=ids,
-        texts=texts,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return {"task_id": task_id, "status": "queued"}
 
 @app.get("/result/{task_id}", summary="ดึงสถานะ/ผลลัพธ์ของ task จาก task_id")
 async def get_result(task_id: str):
