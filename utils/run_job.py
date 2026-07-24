@@ -341,42 +341,53 @@ class JobRunner:
         )
         text = clean_text(text)
         sentences = sent_tokenize(text, engine="crfcut")
-        output_entities = defaultdict(list)
-        lengthed_sentences = []
-        prompt_bytes = prompt_tokens = completion_tokens = 0
 
-        start = time.time()
+        prompts = []
+        prompt_texts = []
+        lengthed_sentences = []
         for sentence in sentences:
             prompt_text, lengthed_text = generate_ner_prompt(sentence)
-            lengthed_sentences.append(lengthed_text)
             prompt = tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt_text}], tokenize=False, add_generation_prompt=True
             )
-            outputs = self.model_state["llm"].generate([prompt], params)
-            raw = outputs[0].outputs[0].text.strip()
-            json_output = _parse_json_markdown(raw)
+            prompts.append(prompt)
+            prompt_texts.append(prompt_text)
+            lengthed_sentences.append(lengthed_text)
 
+        output_entities = defaultdict(list)
+        start = time.time()
+        outputs = self.model_state["llm"].generate(prompts, params) if prompts else []
+        stop = time.time()
+
+        for o in outputs:
+            raw = o.outputs[0].text.strip()
+            json_output = _parse_json_markdown(raw)
             if isinstance(json_output, dict):
                 for key, value in json_output.items():
-                    output_entities[key].extend(value)
+                    if not isinstance(value, list):
+                        continue
+                    for item in value:
+                        if isinstance(item, (dict, list)):
+                            item = json.dumps(item, ensure_ascii=False)
+                        output_entities[key].append(item)
 
-            prompt_bytes += len(prompt_text.encode())
-            prompt_tokens += len(outputs[0].prompt_token_ids)
-            completion_tokens += len(outputs[0].outputs[0].token_ids)
-        stop = time.time()
+        output = {
+            key: [{value: values.count(value)} for value in dict.fromkeys(values)]
+            for key, values in output_entities.items()
+        }
 
         return {
             "time_usage_ms": (stop - start) * 1000,
             "token_usage": {
-                "prompt_bytes": prompt_bytes,
-                "prompt_tokens": prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens": prompt_tokens + completion_tokens,
+                "prompt_bytes": sum(len(p.encode()) for p in prompt_texts),
+                "prompt_tokens": sum(len(o.prompt_token_ids) for o in outputs),
+                "completion_tokens": sum(len(o.outputs[0].token_ids) for o in outputs),
+                "total_tokens": sum(len(o.prompt_token_ids) + len(o.outputs[0].token_ids) for o in outputs),
             },
             "result": {
                 "raw_text": text,
                 "text": " ".join(lengthed_sentences),
-                "output": dict(output_entities),
+                "output": output,
             },
         }
 
@@ -387,61 +398,24 @@ class JobRunner:
         max_tokens: Optional[int],
         temperature: Optional[float]
     ) -> dict:
-        tokenizer = self.model_state["tokenizer"]
-        params = SamplingParams(
-            temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
-            max_tokens=max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS,
-            seed=self.SEED,
-        )
-        
-        prompts = []
-        prompt_texts = []
-        item_index = []
-        texts = [clean_text(text) for text in texts]
-        lengthed_sentences = [[] for _ in texts]
-
-        for i, text in enumerate(texts):
-            sentences = [s.strip() for s in re.split(r'(?<=[.!?。！？])\s+', text) if s.strip()] or [text.strip()]
-            for sentence in sentences:
-                prompt_text, lengthed_text = generate_ner_prompt(sentence)
-                prompt = tokenizer.apply_chat_template(
-                    [{"role": "user", "content": prompt_text}], tokenize=False, add_generation_prompt=True
-                )
-                prompts.append(prompt)
-                prompt_texts.append(prompt_text)
-                item_index.append(i)
-                lengthed_sentences[i].append(lengthed_text)
-
         start = time.time()
-        outputs = self.model_state["llm"].generate(prompts, params)
+        single_results = [
+            self.run_ner_single(text, max_tokens, temperature) for text in texts
+        ]
         stop = time.time()
 
-        output_entities = [defaultdict(list) for _ in texts]
-        for i, o in enumerate(outputs):
-            raw = o.outputs[0].text.strip()
-            json_output = _parse_json_markdown(raw)
-            if isinstance(json_output, dict):
-                target = output_entities[item_index[i]]
-                for key, value in json_output.items():
-                    target[key].extend(value)
-
         results = [
-            {
-                "id": ids[i],
-                "raw_text": texts[i],
-                "text": " ".join(lengthed_sentences[i]),
-                "output": dict(output_entities[i]),
-            }
+            {"id": ids[i], **single_results[i]["result"]}
             for i in range(len(texts))
         ]
 
         return {
             "time_usage_ms": (stop - start) * 1000,
             "token_usage": {
-                "prompt_bytes": sum(len(p.encode()) for p in prompt_texts),
-                "prompt_tokens": sum(len(o.prompt_token_ids) for o in outputs),
-                "completion_tokens": sum(len(o.outputs[0].token_ids) for o in outputs),
-                "total_tokens": sum(len(o.prompt_token_ids) + len(o.outputs[0].token_ids) for o in outputs),
+                "prompt_bytes": sum(r["token_usage"]["prompt_bytes"] for r in single_results),
+                "prompt_tokens": sum(r["token_usage"]["prompt_tokens"] for r in single_results),
+                "completion_tokens": sum(r["token_usage"]["completion_tokens"] for r in single_results),
+                "total_tokens": sum(r["token_usage"]["total_tokens"] for r in single_results),
             },
             "result": results,
         }
