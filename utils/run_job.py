@@ -6,13 +6,14 @@ from pathlib import Path
 import pypdfium2 as pdfium
 from typing import Optional
 from vllm import SamplingParams
-from collections import defaultdict
+from collections import defaultdict, Counter
 from pythainlp.tokenize import sent_tokenize
 
 from vllm.sampling_params import StructuredOutputsParams
 from utils.sentiment_funtion import generate_sentiment_prompt, clean_sentiment
 from utils.ner_funtion import generate_ner_prompt
 from utils.funtion import _parse_json_markdown, clean_text
+from __init__ import NER_MINIMUM_COUNT
 
 
 MAX_PDF_PAGES = 8
@@ -371,10 +372,21 @@ class JobRunner:
                             item = json.dumps(item, ensure_ascii=False)
                         output_entities[key].append(item)
 
-        output = {
-            key: [{value: values.count(value)} for value in dict.fromkeys(values)]
-            for key, values in output_entities.items()
-        }
+        output = {}
+        # วน loop ลุยไปทีละ key และ list ของ values
+        for key, values in output_entities.items():
+            
+            # นับจำนวน items ที่ซ้ำกันใน values
+            counts = Counter(values)
+            
+            # คัดเลือกเฉพาะตัวที่นับได้มากกว่า NER_MINIMUM_COUNT
+            filtered_list = []
+            for value, count in counts.items():
+                if count > NER_MINIMUM_COUNT:
+                    filtered_list.append({value: count})
+            
+            # เก็บผลลัพธ์ใส่ output
+            output[key] = filtered_list
 
         return {
             "time_usage_ms": (stop - start) * 1000,

@@ -34,3 +34,4 @@ FILTER: bool = _SENTIMENT_CFG.get("only_sentiment_output", True)
 NER_DIR = RESULT_DIR / "ner"
 NER_DIR.mkdir(exist_ok=True)
 NER_TAG = CFG["ner"]["ner_tag"]
+NER_MINIMUM_COUNT: int = CFG["ner"]["minimum_count"]
