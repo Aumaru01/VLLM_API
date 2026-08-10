@@ -18,4 +18,8 @@ sentiment:
   max_string_length : 500
   only_sentiment_output : true
 
+ner:
+  ner_tag: "ENTITY, NUMBER, DATE, ORGANIZATION"
+  minimum_count: 2
+
 result_dir: "/home/ai-model/sentiment_by_selfhost_LLM/result"
