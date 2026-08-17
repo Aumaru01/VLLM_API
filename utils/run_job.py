@@ -2,6 +2,8 @@ import re
 import time
 import yaml
 import json
+import pandas as pd
+from io import BytesIO
 from pathlib import Path
 import pypdfium2 as pdfium
 from typing import Optional
@@ -13,7 +15,7 @@ from vllm.sampling_params import StructuredOutputsParams
 from utils.sentiment_funtion import generate_sentiment_prompt, clean_sentiment
 from utils.ner_funtion import generate_ner_prompt
 from utils.funtion import _parse_json_markdown, clean_text
-from __init__ import NER_MINIMUM_COUNT
+from __init__ import NER_MINIMUM_COUNT, VTT_SUMMARY_REQUIRED_COLUMNS, VTT_SUMMARY_SYSTEM_INSTRUCTION_PATH
 
 
 MAX_PDF_PAGES = 8
@@ -431,3 +433,49 @@ class JobRunner:
             },
             "result": results,
         }
+        
+    def run_VTT_summary_single(
+        self,
+        file_bytes: bytes,
+        max_tokens: Optional[int],
+        temperature: Optional[float],
+    ) -> dict:
+        tokenizer = self.model_state["tokenizer"]
+
+        df = pd.read_excel(BytesIO(file_bytes))
+        missing_columns = [col for col in VTT_SUMMARY_REQUIRED_COLUMNS if col not in df.columns]
+        if missing_columns:
+            raise ValueError(f"Missing required columns: {', '.join(missing_columns)}")
+
+        df = df[VTT_SUMMARY_REQUIRED_COLUMNS].dropna(subset=["Text"])
+        df["Text"] = df["Text"].map(clean_text)
+        data_json = df.to_json(orient="records", force_ascii=False)
+
+        system_instruction = VTT_SUMMARY_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8")
+        prompt_text = f"{system_instruction}\n{data_json}"
+
+        prompt = tokenizer.apply_chat_template(
+            [{"role": "user", "content": prompt_text}], tokenize=False, add_generation_prompt=True
+        )
+        params = SamplingParams(
+            temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
+            max_tokens=max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS,
+            seed=self.SEED,
+        )
+        start = time.time()
+        outputs = self.model_state["llm"].generate([prompt], params)
+        stop = time.time()
+        raw = outputs[0].outputs[0].text.strip()
+        prompt_tokens = len(outputs[0].prompt_token_ids)
+        completion_tokens = len(outputs[0].outputs[0].token_ids)
+        return {
+            "result": _parse_json_markdown(raw),
+            "time_usage_ms": (stop - start) * 1000,
+            "token_usage": {
+                "prompt_bytes": len(prompt_text.encode()),
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+        }
+        

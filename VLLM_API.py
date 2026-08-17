@@ -15,10 +15,12 @@ from __init__ import (
     SERVER_HOST,
     SERVER_PORT,
     MODEL_PATH,
+    QUANTIZATION,
     MODEL_DTYPE,
     MODEL_GPU_UTIL,
     MODEL_TRUST_REMOTE,
     DEFAULT_TEMPERATURE,
+    ENFORCE_EAGER
 )
 from utils.schema import (
     UniTextItem,
@@ -46,9 +48,11 @@ async def lifespan(app: FastAPI):
     print(f"[Startup] Loading vLLM model: {MODEL_PATH}")
     llm = LLM(
         model=MODEL_PATH,
+        quantization = QUANTIZATION,
         dtype=MODEL_DTYPE,
         gpu_memory_utilization=MODEL_GPU_UTIL,
         trust_remote_code=MODEL_TRUST_REMOTE,
+        enforce_eager=ENFORCE_EAGER ## ลดการกิน VRAM ล่วงหน้า
     )
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=MODEL_TRUST_REMOTE)
     MODEL_STATE["llm"] = llm
@@ -63,6 +67,7 @@ async def lifespan(app: FastAPI):
     MODEL_STATE["run_sentiment_batch"] = JOBRUNNER.run_sentiment_batch
     MODEL_STATE["run_ner_single"] = JOBRUNNER.run_ner_single
     MODEL_STATE["run_ner_batch"] = JOBRUNNER.run_ner_batch
+    MODEL_STATE["run_VTT_summary_single"] = JOBRUNNER.run_VTT_summary_single
     
     print("[Startup] Model loaded successfully.")
     worker_task = asyncio.create_task(_worker())
@@ -126,6 +131,11 @@ async def _worker() -> None:
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_with_PDF"],
                     job["text"], job["file_bytes"], job["filename"], job["max_tokens"], job["temperature"])
+            
+            elif task_type == "VTT_summary_single":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_VTT_summary_single"],
+                    job["file_bytes"], job["max_tokens"], job["temperature"])
             
             else:
                 raise ValueError(f"Unknown task_type: {task_type}")
@@ -347,6 +357,7 @@ async def ner(
     )
     return {"task_id": task_id, "status": "queued"}
 
+
 @app.post("/ner_batch", summary="Queue text ner of a single chat text", status_code=202)
 async def ner_batch(
     req: list[MultiTextItem],
@@ -373,6 +384,32 @@ async def ner_batch(
         temperature=temperature,
     )
     return {"task_id": task_id, "status": "queued"}
+
+
+@app.post("/VTT_summary_single", summary="Queue generation of VTT summary from an uploaded Excel file", status_code=202)
+async def General_with_file(
+    file: UploadFile = File(...),
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    if file.content_type != "application/excel" and not (file.filename or "").lower().endswith(".xlsx"):
+        raise HTTPException(status_code=422, detail="Only Excel files are supported")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    task_id = _enqueue(
+        "VTT_summary_single",
+        file_bytes=file_bytes,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return {"task_id": task_id, "status": "queued"}
+
 
 @app.get("/result/{task_id}", summary="ดึงสถานะ/ผลลัพธ์ของ task จาก task_id")
 async def get_result(task_id: str):

@@ -1,0 +1,28 @@
+จากข้อมูลที่ให้ไปจงทำสิ่งเหล่านี้:
+1. นำข้อความทั้งหมดมาต่อกัน คั่นด้วย '||' แล้วใส่ใน field 'alltext_in_one'
+2. จาก field 'alltext_in_one' ให้ตัดเรื่องที่เป็นเรื่องเดียวกันมาเก็บไว้ใน field 'same_context_text' ใน context_splitted_list แบบไม่ต้องสรุป และไม่ต้องแก้คำผิด
+3. สร้าง head line ที่เหมาะสมกับเนื้อหาทั้งหมดใน same_context_text ลงใน field 'head_line'
+4. รวบรวม textID ของข้อความที่อยู่ใน same_context_text ลงใน field 'textID_list' ถ้าแบ่งเป็นหัวข้อหรือเรื่องย่อยๆ ได้จงแบ่ง *บังคับแยกข่าวออกจากโฆษณาและละคร*'
+5. ให้เอาข้อความใน same_context_text มาสรุปลงใน field 'summary_text โดยถ้ามีหลายเรื่องในข้อความเดียวให้สรุปเพียงแค่เรื่องที่มีเนื้อหามากที่สุดเท่านั้น'
+6. ระบุ type ลงใน field 'type' ตามหมวดหมู่ดังนี้ 'News', 'Ads', 'General'
+
+ถ้า type เป็น 'News' ระบุ subtype ลงใน field 'subtype' ตามหมวดหมู่ดังนี้ 'Politics','Education','International','Environment','Economy','Sports','Entertainment','Crime','Region','Climate','Disasters','Arts_and_Culture'
+ถ้า type เป็น 'Ads' หรือ 'General' ระบุ subtype ลงใน field 'subtype' เป็น 'Other'
+ห้ามตัด field ใด ๆ ออก, ห้ามเปลี่ยนชื่อ field, ห้ามใช้ค่า null, subtype ต้องถูกกำหนดสำหรับทุก type ถ้าไม่สามารถระบุ subtype ได้ ให้ใส่ 'Other'
+
+จัดการ JSON output ให้อยู่ใน format ดังนี้:
+{   
+    "alltext_in_one": "<all text combined>",
+    "context_splitted_list": [
+        {
+            "same_context_text": "<same context text>",
+            "head_line":"<head_line ที่เหมาะสมกับเนื้อหาทั้งหมดใน same_context_text>",
+            "start_time": "<start time>",
+            "textID_list": [<list of textIDs>],
+            "type": "<type>",
+            "subtype": "<subtype>",
+            "summary_text": "<summary text>"
+        },
+        ...
+    ]
+}

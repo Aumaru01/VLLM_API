@@ -1,6 +1,6 @@
 # VLLM API
 
-A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for self-hosted LLM inference. It exposes an async, queue-based HTTP API for general text generation, structured (JSON-schema constrained) generation, and Thai-language sentiment analysis — all served from a single locally loaded model.
+A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for self-hosted LLM inference. It exposes an async, queue-based HTTP API for general text generation, structured (JSON-schema constrained) generation, Thai-language sentiment analysis, Thai NER, and Excel-transcript (VTT) summarization — all served from a single locally loaded model.
 
 ## Features
 
@@ -10,15 +10,17 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 - Structured output generation constrained to a caller-supplied JSON schema
 - PDF upload endpoint: renders pages to images and sends them to the model as multimodal input (falls back to a "model not support upload file" note if the loaded model isn't vision-capable)
 - Built-in Thai sentiment analysis prompt (Positive / Neutral / Negative)
+- Thai NER: sentence-tokenizes input, extracts entities per sentence, and aggregates/filters them by frequency
+- VTT summary: takes an uploaded Excel transcript (`Date`, `Time`, `Text`, `TextID` columns), groups it into same-context news/ads/general segments, and summarizes each
 - Results persisted to disk (`result_dir`) so they survive process restarts
-- Config-driven via `config.yaml` (server, model, inference defaults, sentiment settings)
+- Config-driven via `config.yaml` (server, model, inference defaults, sentiment/ner/vtt_summuary settings)
 
 ## Requirements
 
 - Python 3.10+
 - An NVIDIA GPU supported by vLLM
 - Dependencies in `requirements.txt`:
-  - `vllm`, `fastapi`, `pydantic`, `transformers`, `PyYAML`, `huggingface_hub`, `pypdfium2` (PDF page rendering)
+  - `vllm`, `fastapi`, `pydantic`, `transformers`, `PyYAML`, `huggingface_hub`, `pypdfium2` (PDF page rendering), `pythainlp` (Thai sentence tokenization for NER), `pandas`/`openpyxl` (Excel parsing for VTT summary)
 
 ## Setup
 
@@ -50,13 +52,19 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 |---|---|---|
 | `server` | `host`, `port` | Address the FastAPI/uvicorn server binds to |
 | `model` | `path` | Local path or HF Hub id of the model to load |
-| `model` | `dtype` | vLLM dtype (e.g. `bfloat16`) |
+| `model` | `dtype` | Compute/weights precision passed to vLLM:<br>• `"auto"`: Uses the precision specified in the model's own config (safest default, matches how the checkpoint was trained).<br>• `"bfloat16"`: Same memory footprint as fp16 but wider dynamic range; the recommended choice on Ampere/Hopper+ GPUs and most modern LLM checkpoints.<br>• `"float16"` / `"half"`: Standard half precision; slightly smaller dynamic range than bf16, which can occasionally cause numerical instability (overflow/NaN) on some models.<br>• `"float32"`: Full precision; ~2x the memory and compute cost of the 16-bit options, only useful for accuracy debugging, not routine inference. |
 | `model` | `gpu_memory_utilization` | Fraction of GPU memory vLLM may use |
+| `model` | `quantization` | Model quantization options:<br>• `None`: Not quantization.<br>• `"fp8"`: Forces BF16 to FP8 in real-time, or loads a true FP8 model (reduces RAM by 50% while maintaining almost 100% intelligence).<br>• `"awq"`: For 4-bit AWQ family models (maximum RAM efficiency, very fast on vLLM).<br>• `"gptq"`: For native GPTQ 4-bit or 8-bit models. <br>• `Other`: https://docs.vllm.ai/en/latest/features/quantization/|
 | `model` | `trust_remote_code` | Passed to vLLM/tokenizer for custom model code |
+| `model` | `enforce_eager` | Passed to vLLM. `true` disables CUDA graph capture, lowering upfront VRAM usage at some cost to throughput; `false` lets vLLM capture graphs for faster steady-state inference |
 | `inference` | `default_temperature` | Fallback sampling param when a request omits it (max_tokens falls back to the model's `max_model_len`) |
 | `inference` | `seed` | Sampling seed used for all generations |
 | `sentiment` | `max_string_length` | Characters of input text used for sentiment analysis |
 | `sentiment` | `only_sentiment_output` | If true, forces output to one of Positive/Neutral/Negative |
+| `ner` | `ner_tag` | Comma-separated list of entity tags the NER prompt asks the model to extract |
+| `ner` | `minimum_count` | An extracted entity must appear more than this many times (across a text's sentences) to be kept in the output |
+| `vtt_summuary` | `vtt_summary_req_col` | Column names required in the uploaded VTT Excel file, e.g. `["Date", "Time", "Text", "TextID"]` |
+| `vtt_summuary` | `system_instruction_path` | Path to the system-instruction `.txt` file appended before the transcript JSON to build the summarization prompt. Four variants ship in `VTT_Summary_system_instruction/`: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. Point this key at whichever fits your accuracy/verbosity tradeoff |
 | `result_dir` | — | Directory where completed task results are written as JSON |
 
 ## Running
@@ -111,6 +119,23 @@ Queue Thai sentiment analysis for a single text.
 ### `POST /sentiment_batch`
 Batch version of sentiment analysis.
 - Body: `[{"id": "...", "text": "..."}, ...]`
+
+### `POST /ner`
+Queue Thai named-entity extraction for a single text.
+- Body: `{"text": "..."}`
+- Input is sentence-tokenized (`pythainlp`), each sentence is run through the NER prompt, and matching entities are aggregated across sentences, keeping only those seen more than `ner.minimum_count` times.
+- Returns (once done) a result with `raw_text`, cleaned `text`, and `output` (entities grouped by tag with their counts)
+
+### `POST /ner_batch`
+Batch version of NER extraction.
+- Body: `[{"id": "...", "text": "..."}, ...]`
+
+### `POST /VTT_summary_single`
+Queue VTT (transcript) summarization from an uploaded Excel file. Multipart form (`multipart/form-data`), not JSON:
+- `file`: an `.xlsx` file with `Date`, `Time`, `Text`, `TextID` columns (required; column names are configurable via `vtt_summuary.vtt_summary_req_col`)
+- `max_tokens`, `temperature` (optional query params)
+
+The rows are cleaned and converted to JSON records, appended to the system instruction file at `vtt_summuary.system_instruction_path`, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
 
 ### `GET /result/{task_id}`
 Fetch the status/result of a queued task. Response includes `status` (`queued`, `running`, `done`, `error`), and once done, `time_used_ms`, `token_usage`, and `result`.

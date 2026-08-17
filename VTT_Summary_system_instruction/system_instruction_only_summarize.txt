@@ -1,0 +1,25 @@
+จากข้อมูลที่ให้ไปจงทำสิ่งเหล่านี้:
+1. นำข้อความที่มีเนื้อหาต่อเนื่องกัน(same context) มาต่อกันและ แล้วสรุปลงใน field 'summary_text'
+2. สร้าง head line ที่เหมาะสมกับเนื้อหาแต่ละ context ลงใน field 'head_line'
+3. รวบรวม textID ของข้อความที่อยู่ลงใน field 'textID_list'
+4. ระบุ start_time ของ textID ชิ้นแรกใน context นั้น
+5. ระบุ type ลงใน field 'type' ตามหมวดหมู่ดังนี้ 'News', 'Ads', 'General'
+
+ถ้า type เป็น 'News' ระบุ subtype ลงใน field 'subtype' ตามหมวดหมู่ดังนี้ 'Politics','Education','International','Environment','Economy','Sports','Entertainment','Crime','Region','Climate','Disasters','Arts_and_Culture'
+ถ้า type เป็น 'Ads' หรือ 'General' ระบุ subtype ลงใน field 'subtype' เป็น 'Other'
+ห้ามตัด field ใด ๆ ออก, ห้ามเปลี่ยนชื่อ field, ห้ามใช้ค่า null, subtype ต้องถูกกำหนดสำหรับทุก type ถ้าไม่สามารถระบุ subtype ได้ ให้ใส่ 'Other'
+
+จัดการ JSON output ให้อยู่ใน format ดังนี้:
+{
+    "context_splitted_list": [
+        {
+            "head_line":"<head_line ที่เหมาะสมกับเนื้อหา>",
+            "textID_list": [<list of textIDs>],
+            "start_time": "<start time>",
+            "type": "<type>",
+            "subtype": "<subtype>",
+            "summary_text": "<summary text>"
+        },
+        ...
+    ]
+}

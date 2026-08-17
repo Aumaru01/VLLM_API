@@ -4,7 +4,7 @@ import time
 import hashlib
 import unicodedata
 
-from __init__ import GENERAL_DIR, SENTIMENT_DIR, RESULT_DIR, NER_DIR
+from __init__ import GENERAL_DIR, SENTIMENT_DIR, RESULT_DIR, NER_DIR, VTT_SUMMARY_DIR
 
 
 def _save_result(task_id: str, data: dict) -> None:
@@ -14,6 +14,8 @@ def _save_result(task_id: str, data: dict) -> None:
         (SENTIMENT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
     elif "ner" in task_id:
         (NER_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
+    elif "VTT_summary" in task_id:
+        (VTT_SUMMARY_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
     else:
         (RESULT_DIR / f"{task_id}.json").write_text(json.dumps(data, ensure_ascii=False))
 
@@ -24,6 +26,8 @@ def _load_result(task_id: str) -> dict | None:
         path = SENTIMENT_DIR / f"{task_id}.json"
     elif "ner" in task_id:
         path = NER_DIR / f"{task_id}.json"
+    elif "VTT_summary" in task_id:
+        path = VTT_SUMMARY_DIR / f"{task_id}.json"
     else:
         path = RESULT_DIR / f"{task_id}.json"
 
