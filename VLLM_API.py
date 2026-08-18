@@ -135,7 +135,7 @@ async def _worker() -> None:
             elif task_type == "VTT_summary_single":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_VTT_summary_single"],
-                    job["file_bytes"], job["max_tokens"], job["temperature"])
+                    job["file_bytes"], job["max_tokens"], job["temperature"], job["system_instruction"])
             
             else:
                 raise ValueError(f"Unknown task_type: {task_type}")
@@ -391,6 +391,7 @@ async def General_with_file(
     file: UploadFile = File(...),
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = DEFAULT_TEMPERATURE,
+    system_instruction: str = "system_instruction",
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -407,6 +408,7 @@ async def General_with_file(
         file_bytes=file_bytes,
         max_tokens=max_tokens,
         temperature=temperature,
+        system_instruction=system_instruction,
     )
     return {"task_id": task_id, "status": "queued"}
 

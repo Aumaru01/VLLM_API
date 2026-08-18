@@ -15,7 +15,7 @@ from vllm.sampling_params import StructuredOutputsParams
 from utils.sentiment_funtion import generate_sentiment_prompt, clean_sentiment
 from utils.ner_funtion import generate_ner_prompt
 from utils.funtion import _parse_json_markdown, clean_text
-from __init__ import NER_MINIMUM_COUNT, VTT_SUMMARY_REQUIRED_COLUMNS, VTT_SUMMARY_SYSTEM_INSTRUCTION_PATH
+from __init__ import NER_MINIMUM_COUNT, VTT_SUMMARY_REQUIRED_COLUMNS, VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR
 
 
 MAX_PDF_PAGES = 8
@@ -26,7 +26,7 @@ MAX_PDF_PAGES = 8
 class JobRunner:
     def __init__(self, config, model_state):
         _cfg = config
-        self.DEFAULT_MAX_TOKENS: int = model_state["llm"].llm_engine.model_config.max_model_len
+        self.DEFAULT_MAX_TOKENS: int = _cfg["inference"]["default_max_tokens"]
         self.DEFAULT_TEMPERATURE: float = _cfg["inference"]["default_temperature"]
         self.SEED: int = _cfg["inference"]["seed"]
         self.model_state = model_state
@@ -439,6 +439,7 @@ class JobRunner:
         file_bytes: bytes,
         max_tokens: Optional[int],
         temperature: Optional[float],
+        system_instruction: str = "system_instruction",
     ) -> dict:
         tokenizer = self.model_state["tokenizer"]
 
@@ -451,11 +452,18 @@ class JobRunner:
         df["Text"] = df["Text"].map(clean_text)
         data_json = df.to_json(orient="records", force_ascii=False)
 
-        system_instruction = VTT_SUMMARY_SYSTEM_INSTRUCTION_PATH.read_text(encoding="utf-8")
-        prompt_text = f"{system_instruction}\n{data_json}"
+        system_instruction_filename = Path(system_instruction).name
+        system_instruction_path = VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR / f"{system_instruction_filename}.txt"
+        if not system_instruction_path.is_file():
+            raise ValueError(f"System instruction file not found: {system_instruction_path}")
+        system_instruction_text = system_instruction_path.read_text(encoding="utf-8")
+        prompt_text = f"{system_instruction_text}\n{data_json}"
 
         prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": prompt_text}], tokenize=False, add_generation_prompt=True
+            [{"role": "user", "content": prompt_text}],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
         )
         params = SamplingParams(
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,

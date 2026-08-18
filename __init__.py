@@ -39,6 +39,6 @@ NER_TAG = CFG["ner"]["ner_tag"]
 NER_MINIMUM_COUNT: int = CFG["ner"]["minimum_count"]
 
 VTT_SUMMARY_REQUIRED_COLUMNS = CFG["vtt_summuary"]["vtt_summary_req_col"]
-VTT_SUMMARY_SYSTEM_INSTRUCTION_PATH = Path(CFG["vtt_summuary"]["system_instruction_path"])
+VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR = Path(CFG["vtt_summuary"]["system_instruction_path"]).parent
 VTT_SUMMARY_DIR = RESULT_DIR / "VTT_Summary"
 VTT_SUMMARY_DIR.mkdir(exist_ok=True)
