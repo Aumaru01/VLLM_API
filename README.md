@@ -64,7 +64,7 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 | `ner` | `ner_tag` | Comma-separated list of entity tags the NER prompt asks the model to extract |
 | `ner` | `minimum_count` | An extracted entity must appear more than this many times (across a text's sentences) to be kept in the output |
 | `vtt_summuary` | `vtt_summary_req_col` | Column names required in the uploaded VTT Excel file, e.g. `["Date", "Time", "Text", "TextID"]` |
-| `vtt_summuary` | `system_instruction_path` | Path used only to locate the `VTT_Summary_system_instruction/` directory (its parent folder) that system-instruction `.txt` files are loaded from. Four variants ship there: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. The specific file used per request is chosen via the `system_instruction` query param on `POST /VTT_summary_single`, not this config key |
+| `vtt_summuary` | `system_instruction_path` | Path to the system-instruction `.txt` file appended before the transcript JSON to build the summarization prompt. Four variants ship in `VTT_Summary_system_instruction/`: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. Point this key at whichever fits your accuracy/verbosity tradeoff |
 | `result_dir` | — | Directory where completed task results are written as JSON |
 
 ## Running
@@ -134,9 +134,8 @@ Batch version of NER extraction.
 Queue VTT (transcript) summarization from an uploaded Excel file. Multipart form (`multipart/form-data`), not JSON:
 - `file`: an `.xlsx` file with `Date`, `Time`, `Text`, `TextID` columns (required; column names are configurable via `vtt_summuary.vtt_summary_req_col`)
 - `max_tokens`, `temperature` (optional query params)
-- `system_instruction` (optional query param, default `"system_instruction"`): filename (without `.txt`) of the prompt to load from `VTT_Summary_system_instruction/`, e.g. `system_instruction_only_summarize`, `system_instruction_acc_mode`, `system_instruction_only_summarize_acc_mode`
 
-The rows are cleaned and converted to JSON records, appended to the chosen system instruction file, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
+The rows are cleaned and converted to JSON records, appended to the system instruction file at `vtt_summuary.system_instruction_path`, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
 
 ### `GET /result/{task_id}`
 Fetch the status/result of a queued task. Response includes `status` (`queued`, `running`, `done`, `error`), and once done, `time_used_ms`, `token_usage`, and `result`.

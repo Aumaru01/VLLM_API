@@ -391,7 +391,7 @@ async def General_with_file(
     file: UploadFile = File(...),
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = DEFAULT_TEMPERATURE,
-    system_instruction: str = "system_instruction",
+    system_instruction: str = "system_instruction.txt",
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")

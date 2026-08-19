@@ -453,7 +453,10 @@ class JobRunner:
         data_json = df.to_json(orient="records", force_ascii=False)
 
         system_instruction_filename = Path(system_instruction).name
-        system_instruction_path = VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR / f"{system_instruction_filename}.txt"
+        if ".txt" in system_instruction_filename:
+            system_instruction_path = VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR / f"{system_instruction_filename}"
+        else:
+            system_instruction_path = VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR / f"{system_instruction_filename}.txt"
         if not system_instruction_path.is_file():
             raise ValueError(f"System instruction file not found: {system_instruction_path}")
         system_instruction_text = system_instruction_path.read_text(encoding="utf-8")
