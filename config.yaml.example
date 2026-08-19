@@ -4,19 +4,19 @@ server:
 
 model:
   path: "/home/ai-model/LLM/model/gemma-4-E4B-it-qat-mobile-ct"
-  quantization: null
   dtype: "bfloat16"
   gpu_memory_utilization: 0.45
+  quantization: null
   trust_remote_code: true
   enforce_eager: true
 
 inference:
   # vLLM API fallback defaults (used when client does not specify)
+  default_max_tokens: 262144
   default_temperature: 0.7
   seed : 5555
 
 sentiment:
-  sentence_length_limit : true
   max_string_length : 500
   only_sentiment_output : true
 
@@ -26,6 +26,6 @@ ner:
 
 vtt_summuary:
   vtt_summary_req_col: ["Date", "Time", "Text", "TextID"]
-  system_instruction_path: /home/api/VLLM_api/VTT_Summary_system_instruction/system_instruction.txt
+  system_instruction_path: /home/api/VLLM_api/VTT_Summary_system_instruction
 
 result_dir: "/home/ai-model/LLM/result"
