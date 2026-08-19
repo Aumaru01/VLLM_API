@@ -28,4 +28,4 @@ vtt_summuary:
   vtt_summary_req_col: ["Date", "Time", "Text", "TextID"]
   system_instruction_path: /home/api/VLLM_api/VTT_Summary_system_instruction/system_instruction.txt
 
-result_dir: "/home/ai-model/sentiment_by_selfhost_LLM/result"
+result_dir: "/home/ai-model/LLM/result"
