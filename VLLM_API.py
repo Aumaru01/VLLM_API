@@ -165,7 +165,7 @@ def _enqueue(task_type: str, **job_fields) -> str:
 
 app = FastAPI(
     title="vLLM Inference API",
-    description="Generic LLM inference API — accepts chat messages, returns generated text",
+    description=f"Generic LLM inference API — accepts chat messages, returns generated text\n\n model path: {MODEL_PATH}",
     lifespan=lifespan,
 )
 
