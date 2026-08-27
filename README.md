@@ -57,14 +57,15 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 | `model` | `quantization` | Model quantization options:<br>• `None`: Not quantization.<br>• `"fp8"`: Forces BF16 to FP8 in real-time, or loads a true FP8 model (reduces RAM by 50% while maintaining almost 100% intelligence).<br>• `"awq"`: For 4-bit AWQ family models (maximum RAM efficiency, very fast on vLLM).<br>• `"gptq"`: For native GPTQ 4-bit or 8-bit models. <br>• `Other`: https://docs.vllm.ai/en/latest/features/quantization/|
 | `model` | `trust_remote_code` | Passed to vLLM/tokenizer for custom model code |
 | `model` | `enforce_eager` | Passed to vLLM. `true` disables CUDA graph capture, lowering upfront VRAM usage at some cost to throughput; `false` lets vLLM capture graphs for faster steady-state inference |
-| `inference` | `default_temperature` | Fallback sampling param when a request omits it (max_tokens falls back to the model's `max_model_len`) |
+| `inference` | `default_max_tokens` | Fallback `max_tokens` used when a request omits it |
+| `inference` | `default_temperature` | Fallback sampling param when a request omits it |
 | `inference` | `seed` | Sampling seed used for all generations |
 | `sentiment` | `max_string_length` | Characters of input text used for sentiment analysis |
 | `sentiment` | `only_sentiment_output` | If true, forces output to one of Positive/Neutral/Negative |
 | `ner` | `ner_tag` | Comma-separated list of entity tags the NER prompt asks the model to extract |
 | `ner` | `minimum_count` | An extracted entity must appear more than this many times (across a text's sentences) to be kept in the output |
 | `vtt_summuary` | `vtt_summary_req_col` | Column names required in the uploaded VTT Excel file, e.g. `["Date", "Time", "Text", "TextID"]` |
-| `vtt_summuary` | `system_instruction_path` | Path to the system-instruction `.txt` file appended before the transcript JSON to build the summarization prompt. Four variants ship in `VTT_Summary_system_instruction/`: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. Point this key at whichever fits your accuracy/verbosity tradeoff |
+| `vtt_summuary` | `system_instruction_path` | Path to the `VTT_Summary_system_instruction/` directory that system-instruction `.txt` files are loaded from. Four variants ship there: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. Which file is used per request is chosen via the `system_instruction` query param on `POST /VTT_summary_single`, not this config key |
 | `result_dir` | — | Directory where completed task results are written as JSON |
 
 ## Running
@@ -89,7 +90,7 @@ All generation/sentiment endpoints are async: they enqueue a job and return a `t
 ### `POST /general`
 Queue single-text generation.
 - Body: `{"text": "..."}`
-- Query params: `max_tokens` (optional, falls back to the model's `max_model_len`), `temperature` (optional, falls back to `config.yaml`'s `default_temperature`)
+- Query params: `max_tokens` (optional, falls back to `config.yaml`'s `default_max_tokens`), `temperature` (optional, falls back to `config.yaml`'s `default_temperature`)
 
 ### `POST /general_batch`
 Queue generation for multiple texts in one batch.
@@ -134,8 +135,9 @@ Batch version of NER extraction.
 Queue VTT (transcript) summarization from an uploaded Excel file. Multipart form (`multipart/form-data`), not JSON:
 - `file`: an `.xlsx` file with `Date`, `Time`, `Text`, `TextID` columns (required; column names are configurable via `vtt_summuary.vtt_summary_req_col`)
 - `max_tokens`, `temperature` (optional query params)
+- `system_instruction` (optional query param, default `"system_instruction.txt"`): filename of the prompt to load from `vtt_summuary.system_instruction_path`, e.g. `system_instruction_only_summarize.txt`, `system_instruction_acc_mode.txt`, `system_instruction_only_summarize_acc_mode.txt` (the `.txt` suffix is optional)
 
-The rows are cleaned and converted to JSON records, appended to the system instruction file at `vtt_summuary.system_instruction_path`, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
+The rows are cleaned and converted to JSON records, appended to the chosen system instruction file, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
 
 ### `GET /result/{task_id}`
 Fetch the status/result of a queued task. Response includes `status` (`queued`, `running`, `done`, `error`), and once done, `time_used_ms`, `token_usage`, and `result`.
