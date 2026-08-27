@@ -106,7 +106,7 @@ async def _worker() -> None:
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_batch_structured"],
                     job["ids"], job["texts"], job["json_schema"], job["max_tokens"], job["temperature"])
-
+            
             elif task_type == "sentiment_single":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_sentiment_single"], 
