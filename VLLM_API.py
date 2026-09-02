@@ -4,11 +4,12 @@ import asyncio
 import contextlib
 
 from vllm import LLM
-from datetime import datetime
 from typing import Optional
+from pathlib import Path
+from datetime import datetime
 from transformers import AutoTokenizer
-from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, File, Form, UploadFile
 
 from __init__ import (
     CFG,
@@ -45,6 +46,7 @@ queue: asyncio.Queue = asyncio.Queue()
 # ============================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    
     print(f"[Startup] Loading vLLM model: {MODEL_PATH}")
     llm = LLM(
         model=MODEL_PATH,
@@ -78,6 +80,21 @@ async def lifespan(app: FastAPI):
         await worker_task
     MODEL_STATE.clear()
 
+def _check_expired_files(cutoff_days: int = 30):
+    try:
+        RESULT_DIR = Path("./result")
+        cutoff_time = time.time() - (cutoff_days * 86400)
+
+        for file_path in RESULT_DIR.rglob("*"):
+            if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
+                try:
+                    file_path.unlink()  # Deletes file in pathlib
+                    print(f"Deleted: {file_path}")
+                except Exception as e:
+                    print(f"Error deleting {file_path}: {e}")
+    except Exception as e:
+        print(f"Directory processing error: {e}")
+
 
 async def _worker() -> None:
     while True:
@@ -85,6 +102,8 @@ async def _worker() -> None:
         task_id = job["task_id"]
         task_store[task_id]["status"] = "running"
         try:
+            _check_expired_files()  # Check and delete expired files before processing the job
+            
             task_type = job["task_type"]
             
             if task_type == "general_single":
