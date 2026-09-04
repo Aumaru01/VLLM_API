@@ -20,7 +20,7 @@ sentiment:
   sentence_length_limit : False
   max_string_length : 500
   only_sentiment_output : true
-  prompt_path: /home/api/VLLM_api/sentiment_prompt
+  prompt_path: ./sentiment_prompt
 
 ner:
   ner_tag: "ENTITY, NUMBER, DATE, ORGANIZATION"
@@ -28,6 +28,6 @@ ner:
 
 vtt_summary:
   vtt_summary_req_col: ["Date", "Time", "Text", "TextID"]
-  system_instruction_path: /home/api/VLLM_api/VTT_Summary_system_instruction
+  system_instruction_path: ./VTT_Summary_system_instruction
 
-result_dir: "/home/ai-model/LLM/result"
+result_dir: ./result
