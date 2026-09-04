@@ -32,13 +32,14 @@ _SENTIMENT_CFG = CFG.get("sentiment", {})
 SENTENCE_LENGTH_LIMIT: bool = _SENTIMENT_CFG.get("sentence_length_limit", True)
 LENGTH_LIMIT: int = _SENTIMENT_CFG.get("max_string_length", 500)
 FILTER: bool = _SENTIMENT_CFG.get("only_sentiment_output", True)
+SENTIMENT_PROMPT_DIR = Path(_SENTIMENT_CFG["prompt_path"])
 
 NER_DIR = RESULT_DIR / "ner"
 NER_DIR.mkdir(exist_ok=True)
 NER_TAG = CFG["ner"]["ner_tag"]
 NER_MINIMUM_COUNT: int = CFG["ner"]["minimum_count"]
 
-VTT_SUMMARY_REQUIRED_COLUMNS = CFG["vtt_summuary"]["vtt_summary_req_col"]
-VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR = Path(CFG["vtt_summuary"]["system_instruction_path"])
+VTT_SUMMARY_REQUIRED_COLUMNS = CFG["vtt_summary"]["vtt_summary_req_col"]
+VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR = Path(CFG["vtt_summary"]["system_instruction_path"])
 VTT_SUMMARY_DIR = RESULT_DIR / "VTT_Summary"
 VTT_SUMMARY_DIR.mkdir(exist_ok=True)

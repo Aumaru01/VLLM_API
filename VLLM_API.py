@@ -128,13 +128,13 @@ async def _worker() -> None:
             
             elif task_type == "sentiment_single":
                 handler_result = await asyncio.to_thread(
-                    MODEL_STATE["run_sentiment_single"], 
-                    job["text"], job["max_tokens"], job["temperature"])
-            
+                    MODEL_STATE["run_sentiment_single"],
+                    job["text"], job["max_tokens"], job["temperature"], job["prompt_file"])
+
             elif task_type == "sentiment_batch":
                 handler_result = await asyncio.to_thread(
-                    MODEL_STATE["run_sentiment_batch"], 
-                    job["ids"], job["texts"], job["max_tokens"], job["temperature"])
+                    MODEL_STATE["run_sentiment_batch"],
+                    job["ids"], job["texts"], job["max_tokens"], job["temperature"], job["prompt_file"])
                 
             elif task_type == "ner_single":
                 handler_result = await asyncio.to_thread(
@@ -318,15 +318,17 @@ async def sentiment(
     req: UniTextItem,
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = DEFAULT_TEMPERATURE,
+    prompt_file: str = "default.txt",
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
 
     task_id = _enqueue(
-        "sentiment_single", 
-        text=req.text, 
-        max_tokens=max_tokens, 
-        temperature=temperature
+        "sentiment_single",
+        text=req.text,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        prompt_file=prompt_file,
     )
     return {"task_id": task_id, "status": "queued"}
 
@@ -336,6 +338,7 @@ async def sentiment_batch(
     req: list[MultiTextItem],
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = DEFAULT_TEMPERATURE,
+    prompt_file: str = "default.txt",
 ):
     if "llm" not in MODEL_STATE:
         raise HTTPException(status_code=503, detail="Model not loaded yet")
@@ -355,6 +358,7 @@ async def sentiment_batch(
         texts=texts,
         max_tokens=max_tokens,
         temperature=temperature,
+        prompt_file=prompt_file,
     )
     return {"task_id": task_id, "status": "queued"}
 

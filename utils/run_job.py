@@ -250,12 +250,13 @@ class JobRunner:
 
     def run_sentiment_single(
         self,
-        text: str, 
-        max_tokens: Optional[int], 
-        temperature: Optional[float]
+        text: str,
+        max_tokens: Optional[int],
+        temperature: Optional[float],
+        prompt_file: str = "default.txt",
     ) -> dict:
         tokenizer = self.model_state["tokenizer"]
-        prompt_text, lengthed_text = generate_sentiment_prompt(text)
+        prompt_text, lengthed_text = generate_sentiment_prompt(text, prompt_file)
         prompt = tokenizer.apply_chat_template(
             [{"role": "user", "content": prompt_text}], tokenize=False, add_generation_prompt=True
         )
@@ -287,17 +288,18 @@ class JobRunner:
 
     def run_sentiment_batch(
         self,
-        ids: list, 
-        texts: list[str], 
-        max_tokens: Optional[int], 
-        temperature: Optional[float]
+        ids: list,
+        texts: list[str],
+        max_tokens: Optional[int],
+        temperature: Optional[float],
+        prompt_file: str = "default.txt",
     ) -> dict:
         tokenizer = self.model_state["tokenizer"]
         prompts = []
         prompt_texts = []
         lengthed_texts = []
         for text in texts:
-            prompt_text, lengthed_text = generate_sentiment_prompt(text)
+            prompt_text, lengthed_text = generate_sentiment_prompt(text, prompt_file)
             prompt_texts.append(prompt_text)
             lengthed_texts.append(lengthed_text)
             prompt = tokenizer.apply_chat_template(

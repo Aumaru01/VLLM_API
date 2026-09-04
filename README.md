@@ -13,7 +13,7 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 - Thai NER: sentence-tokenizes input, extracts entities per sentence, and aggregates/filters them by frequency
 - VTT summary: takes an uploaded Excel transcript (`Date`, `Time`, `Text`, `TextID` columns), groups it into same-context news/ads/general segments, and summarizes each
 - Results persisted to disk (`result_dir`) so they survive process restarts
-- Config-driven via `config.yaml` (server, model, inference defaults, sentiment/ner/vtt_summuary settings)
+- Config-driven via `config.yaml` (server, model, inference defaults, sentiment/ner/vtt_summary settings)
 
 ## Requirements
 
@@ -62,10 +62,11 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 | `inference` | `seed` | Sampling seed used for all generations |
 | `sentiment` | `max_string_length` | Characters of input text used for sentiment analysis |
 | `sentiment` | `only_sentiment_output` | If true, forces output to one of Positive/Neutral/Negative |
+| `sentiment` | `prompt_path` | Path to the `sentiment_prompt/` directory that sentiment prompt `.txt` files are loaded from. Ships with `default.txt`. Which file is used per request is chosen via the `prompt_file` query param on `POST /sentiment` and `POST /sentiment_batch`, not this config key |
 | `ner` | `ner_tag` | Comma-separated list of entity tags the NER prompt asks the model to extract |
 | `ner` | `minimum_count` | An extracted entity must appear more than this many times (across a text's sentences) to be kept in the output |
-| `vtt_summuary` | `vtt_summary_req_col` | Column names required in the uploaded VTT Excel file, e.g. `["Date", "Time", "Text", "TextID"]` |
-| `vtt_summuary` | `system_instruction_path` | Path to the `VTT_Summary_system_instruction/` directory that system-instruction `.txt` files are loaded from. Four variants ship there: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. Which file is used per request is chosen via the `system_instruction` query param on `POST /VTT_summary_single`, not this config key |
+| `vtt_summary` | `vtt_summary_req_col` | Column names required in the uploaded VTT Excel file, e.g. `["Date", "Time", "Text", "TextID"]` |
+| `vtt_summary` | `system_instruction_path` | Path to the `VTT_Summary_system_instruction/` directory that system-instruction `.txt` files are loaded from. Four variants ship there: `system_instruction.txt` (default, groups rows into `same_context_text` plus a `summary_text`), `system_instruction_only_summarize.txt` (drops the raw grouped text, returns only the summary), and `_acc_mode` variants of each that additionally return `alltext_in_one` (all row texts concatenated with `\|\|`) for traceability. Which file is used per request is chosen via the `system_instruction` query param on `POST /VTT_summary_single`, not this config key |
 | `result_dir` | — | Directory where completed task results are written as JSON |
 
 ## Running
@@ -115,11 +116,13 @@ Each page of the PDF is rendered to an image (up to 8 pages) and sent to the mod
 ### `POST /sentiment`
 Queue Thai sentiment analysis for a single text.
 - Body: `{"text": "..."}`
+- Query params: `max_tokens`, `temperature` (optional), `prompt_file` (optional, default `default.txt`; name of a `.txt` file in the `sentiment_prompt/` directory to use as the prompt)
 - Returns (once done) a result with `raw_text`, truncated `text`, and `sentiment`
 
 ### `POST /sentiment_batch`
 Batch version of sentiment analysis.
 - Body: `[{"id": "...", "text": "..."}, ...]`
+- Query params: same as `POST /sentiment`, including `prompt_file`
 
 ### `POST /ner`
 Queue Thai named-entity extraction for a single text.
@@ -133,9 +136,9 @@ Batch version of NER extraction.
 
 ### `POST /VTT_summary_single`
 Queue VTT (transcript) summarization from an uploaded Excel file. Multipart form (`multipart/form-data`), not JSON:
-- `file`: an `.xlsx` file with `Date`, `Time`, `Text`, `TextID` columns (required; column names are configurable via `vtt_summuary.vtt_summary_req_col`)
+- `file`: an `.xlsx` file with `Date`, `Time`, `Text`, `TextID` columns (required; column names are configurable via `vtt_summary.vtt_summary_req_col`)
 - `max_tokens`, `temperature` (optional query params)
-- `system_instruction` (optional query param, default `"system_instruction.txt"`): filename of the prompt to load from `vtt_summuary.system_instruction_path`, e.g. `system_instruction_only_summarize.txt`, `system_instruction_acc_mode.txt`, `system_instruction_only_summarize_acc_mode.txt` (the `.txt` suffix is optional)
+- `system_instruction` (optional query param, default `"system_instruction.txt"`): filename of the prompt to load from `vtt_summary.system_instruction_path`, e.g. `system_instruction_only_summarize.txt`, `system_instruction_acc_mode.txt`, `system_instruction_only_summarize_acc_mode.txt` (the `.txt` suffix is optional)
 
 The rows are cleaned and converted to JSON records, appended to the chosen system instruction file, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
 
