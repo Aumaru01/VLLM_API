@@ -280,6 +280,7 @@ class JobRunner:
             "result": {
                 "raw_text": text,
                 "text": lengthed_text,
+                "prompt": prompt_text,
                 "sentiment": cleaned_result,
             },
         }
@@ -294,9 +295,11 @@ class JobRunner:
         tokenizer = self.model_state["tokenizer"]
         prompts = []
         prompt_texts = []
+        lengthed_texts = []
         for text in texts:
             prompt_text, lengthed_text = generate_sentiment_prompt(text)
             prompt_texts.append(prompt_text)
+            lengthed_texts.append(lengthed_text)
             prompt = tokenizer.apply_chat_template(
                 [{"role": "user", "content": prompt_text}], tokenize=False, add_generation_prompt=True
             )
@@ -316,7 +319,8 @@ class JobRunner:
             results.append({
                 "id": ids[i],
                 "raw_text": texts[i],
-                "text": prompt_texts[i],
+                "lengthed_text": lengthed_texts[i],
+                "prompt": prompt_texts[i],
                 "sentiment": cleaned_result,
             })
         return {
