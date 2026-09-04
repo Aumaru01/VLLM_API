@@ -280,8 +280,8 @@ class JobRunner:
             },
             "result": {
                 "raw_text": text,
-                "text": lengthed_text,
-                "prompt": prompt_text,
+                "lengthed_text": lengthed_text,
+                "final_prompt": prompt_text,
                 "sentiment": cleaned_result,
             },
         }
@@ -322,7 +322,7 @@ class JobRunner:
                 "id": ids[i],
                 "raw_text": texts[i],
                 "lengthed_text": lengthed_texts[i],
-                "prompt": prompt_texts[i],
+                "final_prompt": prompt_texts[i],
                 "sentiment": cleaned_result,
             })
         return {
