@@ -43,3 +43,9 @@ VTT_SUMMARY_REQUIRED_COLUMNS = CFG["vtt_summary"]["vtt_summary_req_col"]
 VTT_SUMMARY_SYSTEM_INSTRUCTION_DIR = Path(CFG["vtt_summary"]["system_instruction_path"])
 VTT_SUMMARY_DIR = RESULT_DIR / "VTT_Summary"
 VTT_SUMMARY_DIR.mkdir(exist_ok=True)
+
+_LOGGING_CFG = CFG.get("logging", {})
+LOG_DIR = Path(_LOGGING_CFG.get("log_dir", "./logs"))
+LOG_DIR.mkdir(exist_ok=True, parents=True)
+LOG_RETENTION_DAYS: int = _LOGGING_CFG.get("retention_days", 14)
+LOG_LEVEL: str = _LOGGING_CFG.get("level", "INFO")

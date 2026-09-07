@@ -30,4 +30,9 @@ vtt_summary:
   vtt_summary_req_col: ["Date", "Time", "Text", "TextID"]
   system_instruction_path: ./VTT_Summary_system_instruction
 
+logging:
+  log_dir: ./logs
+  retention_days: 14
+  level: "INFO"
+
 result_dir: ./result

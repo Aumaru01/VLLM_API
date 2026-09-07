@@ -31,6 +31,7 @@ from utils.schema import (
 )
 from utils.run_job import JobRunner
 from utils.funtion import _save_result, _load_result, _make_id, _scan_disk_tasks
+from utils.logger import logger
 
 os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 
@@ -47,7 +48,7 @@ queue: asyncio.Queue = asyncio.Queue()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     
-    print(f"[Startup] Loading vLLM model: {MODEL_PATH}")
+    logger.info(f"[Startup] Loading vLLM model: {MODEL_PATH}")
     llm = LLM(
         model=MODEL_PATH,
         quantization = QUANTIZATION,
@@ -71,10 +72,11 @@ async def lifespan(app: FastAPI):
     MODEL_STATE["run_ner_batch"] = JOBRUNNER.run_ner_batch
     MODEL_STATE["run_VTT_summary_single"] = JOBRUNNER.run_VTT_summary_single
     
-    print("[Startup] Model loaded successfully.")
+    logger.info("[Startup] Model loaded successfully.")
     worker_task = asyncio.create_task(_worker())
-    
+
     yield
+    logger.info("[Shutdown] Stopping worker and releasing model state.")
     worker_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await worker_task
@@ -89,11 +91,11 @@ def _check_expired_files(cutoff_days: int = 30):
             if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
                 try:
                     file_path.unlink()  # Deletes file in pathlib
-                    print(f"Deleted: {file_path}")
+                    logger.info(f"Deleted expired result file: {file_path}")
                 except Exception as e:
-                    print(f"Error deleting {file_path}: {e}")
+                    logger.error(f"Error deleting {file_path}: {e}")
     except Exception as e:
-        print(f"Directory processing error: {e}")
+        logger.error(f"Directory processing error: {e}")
 
 
 async def _worker() -> None:
@@ -101,11 +103,11 @@ async def _worker() -> None:
         job = await queue.get()
         task_id = job["task_id"]
         task_store[task_id]["status"] = "running"
+        task_type = job["task_type"]
+        logger.info(f"[Job start] task_id={task_id} task_type={task_type}")
         try:
             _check_expired_files()  # Check and delete expired files before processing the job
-            
-            task_type = job["task_type"]
-            
+
             if task_type == "general_single":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_general_single"], 
@@ -169,8 +171,10 @@ async def _worker() -> None:
                 "token_usage": token_usage,
                 "result": result,
             }
+            logger.info(f"[Job done] task_id={task_id} task_type={task_type} time_used_ms={time_used_ms}")
         except Exception as e:
             task_store[task_id] = {**task_store[task_id], "status": "error", "error": str(e)}
+            logger.exception(f"[Job error] task_id={task_id} task_type={task_type}: {e}")
         _save_result(task_id, task_store[task_id])
         queue.task_done()
 
@@ -179,6 +183,7 @@ def _enqueue(task_type: str, **job_fields) -> str:
     task_id = _make_id(task_type)
     task_store[task_id] = {"status": "queued", "created_at": time.time()}
     queue.put_nowait({"task_id": task_id, "task_type": task_type, **job_fields})
+    logger.info(f"[Job queued] task_id={task_id} task_type={task_type} queue_size={queue.qsize()}")
     return task_id
 
 
