@@ -35,6 +35,11 @@ from utils.logger import logger
 
 os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 
+# systemctl start VLLM_API.service
+# systemctl status VLLM_API.service
+# systemctl restart VLLM_API.service
+# systemctl stop VLLM_API.service
+
 # ============================================================
 # Global state
 # ============================================================
