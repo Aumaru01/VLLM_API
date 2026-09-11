@@ -87,11 +87,11 @@ async def lifespan(app: FastAPI):
         await worker_task
     MODEL_STATE.clear()
 
-def _check_expired_files(cutoff_days: int = 30):
+def _check_expired_files(cutoff_days: int = RESULT_RETENTION_DAYS) -> None:
     try:
         RESULT_DIR = Path("./result")
         cutoff_time = time.time() - (cutoff_days * 86400)
-
+    
         for file_path in RESULT_DIR.rglob("*"):
             if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
                 try:

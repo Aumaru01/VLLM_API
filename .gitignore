@@ -5,3 +5,5 @@ nohup*
 *.yaml
 result/
 *.log
+*.log*
+logs/*

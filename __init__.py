@@ -19,6 +19,8 @@ ENFORCE_EAGER: bool = CFG["model"]["enforce_eager"]
 DEFAULT_TEMPERATURE: float = CFG["inference"]["default_temperature"]
 SEED: int = CFG["inference"]["seed"]
 
+RESULT_RETENTION_DAYS: int = CFG["result_retention_days"]
+
 RESULT_DIR = Path(CFG["result_dir"])
 RESULT_DIR.mkdir(exist_ok=True)
 
