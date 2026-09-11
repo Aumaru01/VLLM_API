@@ -13,6 +13,9 @@ venv/bin/python VLLM_API.py
 
 # Specific GPU
 CUDA_VISIBLE_DEVICES=0 ./venv/bin/python VLLM_API.py
-
+CUDA_VISIBLE_DEVICES=0 ./venv_test_new_req/bin/python VLLM_API.py
 # Run in background
 CUDA_VISIBLE_DEVICES=0 nohup ./venv/bin/python -u VLLM_API.py > log.log 2>&1 &
+
+# Run with service manager (systemd) (must have VLLM_API.service file in /etc/systemd/system/)
+systemctl start VLLM_API.service
