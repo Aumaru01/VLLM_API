@@ -21,7 +21,8 @@ from __init__ import (
     MODEL_GPU_UTIL,
     MODEL_TRUST_REMOTE,
     DEFAULT_TEMPERATURE,
-    ENFORCE_EAGER
+    ENFORCE_EAGER,
+    RESULT_RETENTION_DAYS
 )
 from utils.schema import (
     UniTextItem,
