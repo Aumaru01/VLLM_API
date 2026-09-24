@@ -36,3 +36,4 @@ logging:
   level: "INFO"
 
 result_dir: ./result
+result_retention_days: 2
