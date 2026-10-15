@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI):
     MODEL_STATE["run_general_structured"] = JOBRUNNER.run_general_structured
     MODEL_STATE["run_general_batch_structured"] = JOBRUNNER.run_general_batch_structured
     MODEL_STATE["run_general_with_PDF"] = JOBRUNNER.run_general_with_PDF
+    MODEL_STATE["run_text_with_image_single"] = JOBRUNNER.run_text_with_image_single
     MODEL_STATE["run_sentiment_single"] = JOBRUNNER.run_sentiment_single
     MODEL_STATE["run_sentiment_batch"] = JOBRUNNER.run_sentiment_batch
     MODEL_STATE["run_ner_single"] = JOBRUNNER.run_ner_single
@@ -159,6 +160,11 @@ async def _worker() -> None:
                     MODEL_STATE["run_general_with_PDF"],
                     job["text"], job["file_bytes"], job["filename"], job["max_tokens"], job["temperature"])
             
+            elif task_type == "text_with_image_single":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_text_with_image_single"],
+                    job["text"], job["file_bytes"], job["filename"], job["max_tokens"], job["temperature"])
+
             elif task_type == "VTT_summary_single":
                 handler_result = await asyncio.to_thread(
                     MODEL_STATE["run_VTT_summary_single"],
@@ -315,6 +321,37 @@ async def General_with_file(
 
     task_id = _enqueue(
         "general_with_PDF",
+        text=text,
+        file_bytes=file_bytes,
+        filename=file.filename,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.post("/text_with_image_single", summary="Queue generation of general text from a chat text with an uploaded image file", status_code=202)
+async def text_with_image_single(
+    file: UploadFile = File(...),
+    text: Optional[str] = Form(None),
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = DEFAULT_TEMPERATURE,
+):
+    if "llm" not in MODEL_STATE:
+        raise HTTPException(status_code=503, detail="Model not loaded yet")
+
+    is_image = (file.content_type or "").startswith("image/") or (file.filename or "").lower().endswith(
+        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+    )
+    if not is_image:
+        raise HTTPException(status_code=422, detail="Only image files are supported")
+
+    file_bytes = await file.read()
+    if not file_bytes:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    task_id = _enqueue(
+        "text_with_image_single",
         text=text,
         file_bytes=file_bytes,
         filename=file.filename,
