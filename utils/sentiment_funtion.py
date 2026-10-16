@@ -21,7 +21,7 @@ def generate_sentiment_prompt(text, prompt_file: str = "default.txt"):
         lengthed_text = text
 
     prompt = _load_sentiment_prompt(prompt_file)
-    input_prompt = prompt+f"คอมเมนต์ที่ต้องการวิเคราะห์: '{lengthed_text}'"
+    input_prompt = prompt+f"ข้อความที่ต้องการวิเคราะห์: '{lengthed_text}'"
 
     return input_prompt, lengthed_text
 
