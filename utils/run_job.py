@@ -322,7 +322,7 @@ class JobRunner:
         )
         params = SamplingParams(
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
-            max_tokens=max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS,
+            max_tokens=3,
             seed=self.SEED,
         )
         start = time.time()
@@ -368,7 +368,7 @@ class JobRunner:
             prompts.append(prompt)
         params = SamplingParams(
             temperature=temperature if temperature is not None else self.DEFAULT_TEMPERATURE,
-            max_tokens=max_tokens if max_tokens is not None else self.DEFAULT_MAX_TOKENS,
+            max_tokens=3,
             seed=self.SEED,
         )
         start = time.time()
