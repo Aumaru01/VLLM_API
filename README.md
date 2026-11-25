@@ -15,6 +15,56 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 - Results persisted to disk (`result_dir`) so they survive process restarts
 - Config-driven via `config.yaml` (server, model, inference defaults, sentiment/ner/vtt_summary settings)
 
+## Project Structure
+
+```
+VLLM_API/
+├── VLLM_API.py                  # Entry point: loads the model (lifespan), runs the job worker, registers routers
+├── __init__.py                  # Reads config.yaml and exposes config constants
+├── config.yaml(.example)        # Runtime configuration
+├── run.sh                       # Example run commands
+├── router/                      # One file per endpoint (FastAPI APIRouter)
+│   ├── __init__.py              # Collects every router into ALL_ROUTERS (order = order in /docs)
+│   ├── general.py               # POST /general
+│   ├── general_batch.py         # POST /general_batch
+│   ├── general_structured.py    # POST /general_structured
+│   ├── general_batch_structured.py  # POST /general_batch_structured
+│   ├── general_with_pdf.py      # POST /general_with_PDF
+│   ├── text_with_image_single.py    # POST /text_with_image_single
+│   ├── sentiment.py             # POST /sentiment
+│   ├── sentiment_batch.py       # POST /sentiment_batch
+│   ├── ner.py                   # POST /ner
+│   ├── ner_batch.py             # POST /ner_batch
+│   ├── vtt_summary_single.py    # POST /VTT_summary_single
+│   ├── result.py                # GET  /result/{task_id}
+│   ├── task_queue.py            # GET  /queue
+│   └── health.py                # GET  /health
+├── utils/
+│   ├── state.py                 # Shared state: MODEL_STATE, task_store, queue, _enqueue()
+│   ├── run_job.py               # JobRunner: the inference handlers the worker calls
+│   ├── schema.py                # Pydantic request models
+│   ├── funtion.py               # Result save/load, task-id generation, disk scan
+│   ├── sentiment_funtion.py     # Sentiment helpers
+│   ├── ner_funtion.py           # NER helpers
+│   ├── logger.py                # Logging setup
+│   └── hf_model_downloader.py   # Optional Hugging Face model downloader
+├── sentiment_prompt/            # Sentiment prompt .txt files (default.txt, ...)
+└── VTT_Summary_system_instruction/  # VTT summary system-instruction .txt files
+```
+
+### Request flow
+
+1. A router in `router/` validates the request and calls `_enqueue(task_type, ...)` from `utils/state.py`, which stores the task as `queued` and returns a `task_id`.
+2. The `_worker()` loop in `VLLM_API.py` pulls jobs off the queue one at a time, dispatches on `task_type` to the matching `JobRunner` method (run in a thread via `asyncio.to_thread`), and writes the result into `task_store` and to disk.
+3. The client polls `GET /result/{task_id}`.
+
+### Adding a new endpoint
+
+1. Add a `run_<name>` method to `JobRunner` in `utils/run_job.py` and register it in `MODEL_STATE` inside `lifespan()` in `VLLM_API.py`.
+2. Add an `elif task_type == "<name>":` branch in `_worker()` in `VLLM_API.py` that calls it.
+3. Create `router/<name>.py` with `router = APIRouter()` and a handler that calls `_enqueue("<name>", ...)`.
+4. Import the module in `router/__init__.py` and add its `router` to `ALL_ROUTERS`.
+
 ## Requirements
 
 - Python 3.10+
@@ -40,10 +90,10 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 
    Set `model.path` to either a local model directory or a Hugging Face Hub repo id, and set `result_dir` to a writable path where task results will be saved.
 
-3. (Optional) Download a model from Hugging Face Hub ahead of time with `hf_model_downloader.py` — edit `model_repo`, `save_dir`, and `hf_token` at the top of the file, then run:
+3. (Optional) Download a model from Hugging Face Hub ahead of time with `utils/hf_model_downloader.py` — copy `utils/model_download_config.yaml.example` to `utils/model_download_config.yaml`, set `model_name`, `save_dir`, and `Huggingface_token`, then run:
 
    ```bash
-   python hf_model_downloader.py
+   python utils/hf_model_downloader.py
    ```
 
 ## Configuration (`config.yaml`)
@@ -113,6 +163,12 @@ Queue generation from a chat text plus an uploaded PDF file. Multipart form (`mu
 
 Each page of the PDF is rendered to an image (up to 8 pages) and sent to the model as multimodal input via `LLM.chat()`. If the loaded model isn't vision-capable (or the file fails to render), the result comes back with `"note": "model not support upload file"` and an `error` field instead of raising.
 
+### `POST /text_with_image_single`
+Queue generation from a chat text plus an uploaded image. Multipart form (`multipart/form-data`), not JSON:
+- `file`: the image (required; `image/*` content type or `.png`, `.jpg`, `.jpeg`, `.webp`, `.bmp`, `.gif`)
+- `text`: prompt text (optional form field)
+- `max_tokens`, `temperature` (optional query params)
+
 ### `POST /sentiment`
 Queue Thai sentiment analysis for a single text.
 - Body: `{"text": "..."}`
@@ -144,6 +200,11 @@ The rows are cleaned and converted to JSON records, appended to the chosen syste
 
 ### `GET /result/{task_id}`
 Fetch the status/result of a queued task. Response includes `status` (`queued`, `running`, `done`, `error`), and once done, `time_used_ms`, `token_usage`, and `result`.
+
+### `GET /queue`
+List tasks from the current run plus results saved on disk, newest first.
+- Query params: `days` (optional, default `3`): only include tasks created within this many days
+- Returns `{"queue_size": int, "count": int, "tasks": [{"task_id", "status", "created_at"}, ...]}`
 
 ### `GET /health`
 Returns `{"status": "ok", "model_loaded": bool, "queue_size": int}`.
