@@ -4,12 +4,10 @@ import asyncio
 import contextlib
 
 from vllm import LLM
-from typing import Optional
 from pathlib import Path
-from datetime import datetime
 from transformers import AutoTokenizer
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, File, Form, UploadFile
+from fastapi import FastAPI
 
 from __init__ import (
     CFG,
@@ -20,19 +18,14 @@ from __init__ import (
     MODEL_DTYPE,
     MODEL_GPU_UTIL,
     MODEL_TRUST_REMOTE,
-    DEFAULT_TEMPERATURE,
     ENFORCE_EAGER,
     RESULT_RETENTION_DAYS
 )
-from utils.schema import (
-    UniTextItem,
-    MultiTextItem,
-    GenerateStructuredRequest,
-    GenerateBatchStructuredRequest,
-)
 from utils.run_job import JobRunner
-from utils.funtion import _save_result, _load_result, _make_id, _scan_disk_tasks
+from utils.funtion import _save_result
 from utils.logger import logger
+from utils.state import MODEL_STATE, task_store, queue
+from router import ALL_ROUTERS
 
 os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 
@@ -40,13 +33,6 @@ os.environ["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
 # systemctl status VLLM_API.service
 # systemctl restart VLLM_API.service
 # systemctl stop VLLM_API.service
-
-# ============================================================
-# Global state
-# ============================================================
-MODEL_STATE: dict = {}
-task_store: dict[str, dict] = {}
-queue: asyncio.Queue = asyncio.Queue()
 
 # ============================================================
 # Inference jobs (run off the event loop via asyncio.to_thread)
@@ -191,14 +177,6 @@ async def _worker() -> None:
         queue.task_done()
 
 
-def _enqueue(task_type: str, **job_fields) -> str:
-    task_id = _make_id(task_type)
-    task_store[task_id] = {"status": "queued", "created_at": time.time()}
-    queue.put_nowait({"task_id": task_id, "task_type": task_type, **job_fields})
-    logger.info(f"[Job queued] task_id={task_id} task_type={task_type} queue_size={queue.qsize()}")
-    return task_id
-
-
 app = FastAPI(
     title="vLLM Inference API",
     description=f"Generic LLM inference API — accepts chat messages, returns generated text\n\n model path: {MODEL_PATH}",
@@ -206,327 +184,10 @@ app = FastAPI(
 )
 
 # ============================================================
-# Endpoints
+# Endpoints (one file per endpoint in router/)
 # ============================================================
-@app.post("/general", summary="Queue generation of general text from a single chat text", status_code=202)
-async def General(
-    req: UniTextItem,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    task_id = _enqueue(
-        "general_single", 
-        text=req.text, 
-        max_tokens=max_tokens, 
-        temperature=temperature
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/general_batch", summary="Queue generation of general text from multiple chat texts in a single batch", status_code=202,)
-async def General_batch(
-    req: list[MultiTextItem],
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    ids = [item.id for item in req]
-    texts = [item.text for item in req]
-    
-    if not texts:
-        raise HTTPException(status_code=422, detail="texts must not be empty")
-    
-    if len(set(ids)) != len(ids):
-        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
-
-    task_id = _enqueue(
-        "general_batch", 
-        ids=ids, 
-        texts=texts, 
-        max_tokens=max_tokens, 
-        temperature=temperature
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/general_structured", summary="Queue generation of general structured JSON output from a single text", status_code=202,)
-async def General_structured(
-    req: GenerateStructuredRequest,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    task_id = _enqueue(
-        "general_structured",
-        text=req.text.text,
-        json_schema=req.json_schema,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/general_batch_structured", summary="Queue generation of general structured JSON output from multiple texts", status_code=202,)
-async def General_batch_structured(
-    req: GenerateBatchStructuredRequest,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    ids = [item.id for item in req.texts]
-    texts = [item.text for item in req.texts]
-
-    if not texts:
-        raise HTTPException(status_code=422, detail="texts must not be empty")
-
-    if len(set(ids)) != len(ids):
-        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
-
-    task_id = _enqueue(
-        "general_batch_structured",
-        ids=ids,
-        texts=texts,
-        json_schema=req.json_schema,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/general_with_PDF", summary="Queue generation of general text from a chat text with an uploaded PDF file", status_code=202)
-async def General_with_file(
-    file: UploadFile = File(...),
-    text: Optional[str] = Form(None),
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    if file.content_type != "application/pdf" and not (file.filename or "").lower().endswith(".pdf"):
-        raise HTTPException(status_code=422, detail="Only PDF files are supported")
-
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=422, detail="Uploaded file is empty")
-
-    task_id = _enqueue(
-        "general_with_PDF",
-        text=text,
-        file_bytes=file_bytes,
-        filename=file.filename,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/text_with_image_single", summary="Queue generation of general text from a chat text with an uploaded image file", status_code=202)
-async def text_with_image_single(
-    file: UploadFile = File(...),
-    text: Optional[str] = Form(None),
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    is_image = (file.content_type or "").startswith("image/") or (file.filename or "").lower().endswith(
-        (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
-    )
-    if not is_image:
-        raise HTTPException(status_code=422, detail="Only image files are supported")
-
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=422, detail="Uploaded file is empty")
-
-    task_id = _enqueue(
-        "text_with_image_single",
-        text=text,
-        file_bytes=file_bytes,
-        filename=file.filename,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/sentiment", summary="Queue sentiment analysis of a single chat text", status_code=202)
-async def sentiment(
-    req: UniTextItem,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-    prompt_file: str = "default.txt",
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    task_id = _enqueue(
-        "sentiment_single",
-        text=req.text,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        prompt_file=prompt_file,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/sentiment_batch", summary="Queue sentiment analysis of multiple chat texts", status_code=202)
-async def sentiment_batch(
-    req: list[MultiTextItem],
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-    prompt_file: str = "default.txt",
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    ids = [item.id for item in req]
-    texts = [item.text for item in req]
-
-    if not texts:
-        raise HTTPException(status_code=422, detail="texts must not be empty")
-
-    if len(set(ids)) != len(ids):
-        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
-
-    task_id = _enqueue(
-        "sentiment_batch",
-        ids=ids,
-        texts=texts,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        prompt_file=prompt_file,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/ner", summary="Queue text ner of a single chat text", status_code=202)
-async def ner(
-    req: UniTextItem,
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    task_id = _enqueue(
-        "ner_single", 
-        text=req.text, 
-        max_tokens=max_tokens, 
-        temperature=temperature
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/ner_batch", summary="Queue text ner of a single chat text", status_code=202)
-async def ner_batch(
-    req: list[MultiTextItem],
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    ids = [item.id for item in req]
-    texts = [item.text for item in req]
-
-    if not texts:
-        raise HTTPException(status_code=422, detail="texts must not be empty")
-
-    if len(set(ids)) != len(ids):
-        raise HTTPException(status_code=422, detail="Duplicate ids found in texts")
-
-    task_id = _enqueue(
-        "ner_batch",
-        ids=ids,
-        texts=texts,
-        max_tokens=max_tokens,
-        temperature=temperature,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.post("/VTT_summary_single", summary="Queue generation of VTT summary from an uploaded Excel file", status_code=202)
-async def General_with_file(
-    file: UploadFile = File(...),
-    max_tokens: Optional[int] = None,
-    temperature: Optional[float] = DEFAULT_TEMPERATURE,
-    system_instruction: str = "system_instruction.txt",
-):
-    if "llm" not in MODEL_STATE:
-        raise HTTPException(status_code=503, detail="Model not loaded yet")
-
-    if file.content_type != "application/excel" and not (file.filename or "").lower().endswith(".xlsx"):
-        raise HTTPException(status_code=422, detail="Only Excel files are supported")
-
-    file_bytes = await file.read()
-    if not file_bytes:
-        raise HTTPException(status_code=422, detail="Uploaded file is empty")
-
-    task_id = _enqueue(
-        "VTT_summary_single",
-        file_bytes=file_bytes,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        system_instruction=system_instruction,
-    )
-    return {"task_id": task_id, "status": "queued"}
-
-
-@app.get("/result/{task_id}", summary="ดึงสถานะ/ผลลัพธ์ของ task จาก task_id")
-async def get_result(task_id: str):
-    task = task_store.get(task_id)
-    if task is not None:
-        return {"task_id": task_id, **task}
-
-    saved = _load_result(task_id)
-    if saved is not None:
-        return {"task_id": task_id, **saved}
-
-    raise HTTPException(status_code=404, detail="task_id not found")
-
-
-@app.get("/queue", summary="List task ids and status from the current run plus disk history")
-async def list_queue(days: int = 3):
-    cutoff = time.time() - days * 86400
-    tasks = _scan_disk_tasks(cutoff)
-
-    for tid, t in task_store.items():
-        created_at = t.get("created_at", time.time())
-        if created_at >= cutoff:
-            tasks[tid] = {"status": t.get("status"), "created_at": created_at}
-        else:
-            tasks.pop(tid, None)
-
-    ordered = sorted(tasks.items(), key=lambda kv: kv[1]["created_at"], reverse=True)
-    return {
-        "queue_size": queue.qsize(),
-        "count": len(ordered),
-        "tasks": [
-            {
-                "task_id": tid,
-                "status": info["status"],
-                "created_at": datetime.fromtimestamp(info["created_at"]).strftime("%Y-%m-%d %H:%M:%S"),
-            }
-            for tid, info in ordered
-        ],
-    }
-
-
-@app.get("/health", summary="ตรวจสอบสถานะ API")
-async def health():
-    return {"status": "ok", "model_loaded": "llm" in MODEL_STATE, "queue_size": queue.qsize()}
+for _router in ALL_ROUTERS:
+    app.include_router(_router)
 
 
 if __name__ == "__main__":
