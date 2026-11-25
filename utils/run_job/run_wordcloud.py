@@ -8,8 +8,8 @@ from utils.wordcloud_funtion import (
     WORDCLOUD_DEFAULT_MAX_TOKENS,
     generate_wordcloud_prompt,
     aggregate_wordcloud,
+    clean_wordcloud_text,
 )
-from utils.funtion import clean_text
 
 
 def run_wordcloud(
@@ -22,8 +22,8 @@ def run_wordcloud(
 ) -> dict:
     tokenizer = self.model_state["tokenizer"]
 
-    # Skip empty texts; they contribute no words
-    valid = [(i, clean_text(t)) for i, t in enumerate(texts)]
+    # Clean (HTML, URL, emoji, ...) then skip texts that end up empty
+    valid = [(i, clean_wordcloud_text(t)) for i, t in enumerate(texts)]
     valid = [(i, t) for i, t in valid if t]
 
     prompt_texts = [generate_wordcloud_prompt(t) for _, t in valid]

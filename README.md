@@ -51,7 +51,7 @@ VLLM_API/
 │   ├── funtion.py               # Result save/load, task-id generation, disk scan
 │   ├── sentiment_funtion.py     # Sentiment helpers
 │   ├── ner_funtion.py           # NER helpers
-│   ├── wordcloud_funtion.py     # Word cloud prompt, JSON schema, aggregation
+│   ├── wordcloud_funtion.py     # Word cloud text cleaning, prompt, JSON schema, aggregation
 │   ├── logger.py                # Logging setup
 │   └── hf_model_downloader.py   # Optional Hugging Face model downloader
 ├── sentiment_prompt/            # Sentiment prompt .txt files (default.txt, ...)
@@ -208,6 +208,7 @@ The rows are cleaned and converted to JSON records, appended to the chosen syste
 Queue word-cloud keyword extraction across many texts.
 - Body: `[{"id": "...", "text": "..."}, ...]` — at most 1000 rows are used; if more are sent, only the first 1000 are kept (the response reports `input_rows`, `used_rows`, `trimmed`)
 - Query params: `max_tokens` (optional, default `1024` per text), `temperature` (optional)
+- Each text is first cleaned by `clean_wordcloud_text()` in `utils/wordcloud_funtion.py` (HTML tags/entities/script, URLs, emails, @mentions, emoji, invisible characters, elongated characters like `มากกกก`, ellipses and repeated punctuation; hashtags keep their word without `#`). Rows that are empty after cleaning are skipped.
 - Each text is sent to the model (one batched vLLM call, JSON-schema constrained) to extract keywords with how often they appear; counts of the same word (case/whitespace-insensitive) are then summed across all texts.
 - Returns (once done) a result with `input_rows`, `used_rows`, `trimmed`, `unique_words`, `words` (`[{"word", "count"}, ...]` sorted by count, highest first), `per_id` (words per input row), and `failed_ids` (rows whose model output was not valid JSON)
 
