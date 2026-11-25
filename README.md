@@ -12,6 +12,7 @@ A FastAPI service that wraps [vLLM](https://github.com/vllm-project/vllm) for se
 - Built-in Thai sentiment analysis prompt (Positive / Neutral / Negative)
 - Thai NER: sentence-tokenizes input, extracts entities per sentence, and aggregates/filters them by frequency
 - VTT summary: takes an uploaded Excel transcript (`Date`, `Time`, `Text`, `TextID` columns), groups it into same-context news/ads/general segments, and summarizes each
+- Word cloud: extracts keywords with counts from up to 1000 texts via the LLM and merges them into one word/count list
 - Results persisted to disk (`result_dir`) so they survive process restarts
 - Config-driven via `config.yaml` (server, model, inference defaults, sentiment/ner/vtt_summary settings)
 
@@ -36,6 +37,7 @@ VLLM_API/
 │   ├── ner.py                   # POST /ner
 │   ├── ner_batch.py             # POST /ner_batch
 │   ├── vtt_summary_single.py    # POST /VTT_summary_single
+│   ├── wordcloud.py             # POST /wordcloud
 │   ├── result.py                # GET  /result/{task_id}
 │   ├── task_queue.py            # GET  /queue
 │   └── health.py                # GET  /health
@@ -46,6 +48,7 @@ VLLM_API/
 │   ├── funtion.py               # Result save/load, task-id generation, disk scan
 │   ├── sentiment_funtion.py     # Sentiment helpers
 │   ├── ner_funtion.py           # NER helpers
+│   ├── wordcloud_funtion.py     # Word cloud prompt, JSON schema, aggregation
 │   ├── logger.py                # Logging setup
 │   └── hf_model_downloader.py   # Optional Hugging Face model downloader
 ├── sentiment_prompt/            # Sentiment prompt .txt files (default.txt, ...)
@@ -197,6 +200,13 @@ Queue VTT (transcript) summarization from an uploaded Excel file. Multipart form
 - `system_instruction` (optional query param, default `"system_instruction.txt"`): filename of the prompt to load from `vtt_summary.system_instruction_path`, e.g. `system_instruction_only_summarize.txt`, `system_instruction_acc_mode.txt`, `system_instruction_only_summarize_acc_mode.txt` (the `.txt` suffix is optional)
 
 The rows are cleaned and converted to JSON records, appended to the chosen system instruction file, and sent to the model as a single prompt. The model groups same-context rows, classifies each group (News/Ads/General, with subtypes), and returns a summary per group.
+
+### `POST /wordcloud`
+Queue word-cloud keyword extraction across many texts.
+- Body: `[{"id": "...", "text": "..."}, ...]` — at most 1000 rows are used; if more are sent, only the first 1000 are kept (the response reports `input_rows`, `used_rows`, `trimmed`)
+- Query params: `max_tokens` (optional, default `1024` per text), `temperature` (optional)
+- Each text is sent to the model (one batched vLLM call, JSON-schema constrained) to extract keywords with how often they appear; counts of the same word (case/whitespace-insensitive) are then summed across all texts.
+- Returns (once done) a result with `input_rows`, `used_rows`, `trimmed`, `unique_words`, `words` (`[{"word", "count"}, ...]` sorted by count, highest first), `per_id` (words per input row), and `failed_ids` (rows whose model output was not valid JSON)
 
 ### `GET /result/{task_id}`
 Fetch the status/result of a queued task. Response includes `status` (`queued`, `running`, `done`, `error`), and once done, `time_used_ms`, `token_usage`, and `result`.

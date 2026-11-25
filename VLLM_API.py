@@ -64,6 +64,7 @@ async def lifespan(app: FastAPI):
     MODEL_STATE["run_ner_single"] = JOBRUNNER.run_ner_single
     MODEL_STATE["run_ner_batch"] = JOBRUNNER.run_ner_batch
     MODEL_STATE["run_VTT_summary_single"] = JOBRUNNER.run_VTT_summary_single
+    MODEL_STATE["run_wordcloud"] = JOBRUNNER.run_wordcloud
     
     logger.info("[Startup] Model loaded successfully.")
     worker_task = asyncio.create_task(_worker())
@@ -156,6 +157,11 @@ async def _worker() -> None:
                     MODEL_STATE["run_VTT_summary_single"],
                     job["file_bytes"], job["max_tokens"], job["temperature"], job["system_instruction"])
             
+            elif task_type == "wordcloud":
+                handler_result = await asyncio.to_thread(
+                    MODEL_STATE["run_wordcloud"],
+                    job["ids"], job["texts"], job["input_rows"], job["max_tokens"], job["temperature"])
+
             else:
                 raise ValueError(f"Unknown task_type: {task_type}")
             
