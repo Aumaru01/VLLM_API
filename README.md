@@ -43,7 +43,10 @@ VLLM_API/
 │   └── health.py                # GET  /health
 ├── utils/
 │   ├── state.py                 # Shared state: MODEL_STATE, task_store, queue, _enqueue()
-│   ├── run_job.py               # JobRunner: the inference handlers the worker calls
+│   ├── run_job/                 # JobRunner: the inference handlers the worker calls
+│   │   ├── __init__.py          # class JobRunner (binds each run_* function below as a method)
+│   │   ├── constants.py         # e.g. MAX_PDF_PAGES
+│   │   └── run_<name>.py        # one file per handler, e.g. run_general_single.py, run_wordcloud.py
 │   ├── schema.py                # Pydantic request models
 │   ├── funtion.py               # Result save/load, task-id generation, disk scan
 │   ├── sentiment_funtion.py     # Sentiment helpers
@@ -63,7 +66,7 @@ VLLM_API/
 
 ### Adding a new endpoint
 
-1. Add a `run_<name>` method to `JobRunner` in `utils/run_job.py` and register it in `MODEL_STATE` inside `lifespan()` in `VLLM_API.py`.
+1. Create `utils/run_job/run_<name>.py` with a function `def run_<name>(self, ...)` (use `self.model_state`, `self.DEFAULT_TEMPERATURE`, etc. as in the other handlers), import it in `utils/run_job/__init__.py` and add `run_<name> = run_<name>` to the `JobRunner` class. Then register it in `MODEL_STATE` inside `lifespan()` in `VLLM_API.py`.
 2. Add an `elif task_type == "<name>":` branch in `_worker()` in `VLLM_API.py` that calls it.
 3. Create `router/<name>.py` with `router = APIRouter()` and a handler that calls `_enqueue("<name>", ...)`.
 4. Import the module in `router/__init__.py` and add its `router` to `ALL_ROUTERS`.

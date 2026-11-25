@@ -1,0 +1,1 @@
+MAX_PDF_PAGES = 8
